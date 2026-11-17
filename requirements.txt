@@ -1,0 +1,10 @@
+
+PySide6
+requests
+beautifulsoup4
+trafilatura
+pandas
+openpyxl
+scikit-learn
+python-dotenv
+lxml
