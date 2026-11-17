@@ -1,5 +1,6 @@
 from typing import Dict, List, Any, Optional
 from modules.audit.page_rules import PageAuditRules
+from modules.audit.technical_rules import page_checks, site_checks
 
 
 class TechnicalSEOAuditEngine:
@@ -12,7 +13,7 @@ class TechnicalSEOAuditEngine:
     def __init__(self):
         self.page_rules = PageAuditRules()
 
-    def audit_pages_batch(self, pages_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def audit_pages_batch(self, pages_data: List[Dict[str, Any]], *, links=None, observations=None, sitemap_urls=None, complete=False) -> Dict[str, Any]:
         """
         Runs comprehensive technical and on-page SEO audits across a batch of crawled/parsed pages.
         """
@@ -34,7 +35,7 @@ class TechnicalSEOAuditEngine:
                 continue
 
             pages_audited_count += 1
-            page_issues = self.page_rules.audit_page(page)
+            page_issues = self.page_rules.audit_page(page) + page_checks(page)
 
             for issue in page_issues:
                 all_issues.append(issue)
@@ -49,6 +50,14 @@ class TechnicalSEOAuditEngine:
                 # آمارگیری بر اساس دسته‌بندی (Category)
                 cat = issue.get("category", "General")
                 category_summary[cat] = category_summary.get(cat, 0) + 1
+
+        extra = site_checks(pages_data, links or [], observations or [], sitemap_urls or [], complete)
+        for item in extra:
+            if any(i['rule_id'] == item['rule_id'] and i['url'] == item['url'] for i in all_issues):
+                continue
+            all_issues.append(item)
+            severity_summary[item['severity']] += 1
+            category_summary[item['category']] = category_summary.get(item['category'], 0) + 1
 
         # مرتب‌سازی مشکلات بر اساس سطح اهمیت (Critical -> High -> Medium -> Low)
         severity_weight = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}

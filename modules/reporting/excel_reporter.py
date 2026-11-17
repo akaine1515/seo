@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import pandas as pd
@@ -19,6 +20,7 @@ class ExcelReportGenerator:
     def _style_worksheet(self, worksheet, df: pd.DataFrame) -> None:
         """Applies clean corporate styling, auto-column widths, and frozen header panes."""
         worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
 
         # استایل‌دهی به ردیف هدر
         for col_idx in range(1, len(df.columns) + 1):
@@ -80,6 +82,17 @@ class ExcelReportGenerator:
             {"Metric": "Content Gaps Identified", "Value": len(content_gaps)},
             {"Metric": "Keyword Overlaps Identified", "Value": len(keyword_overlaps)},
         ]
+        overview_rows.extend([
+            {"Metric": "Analysis run ID", "Value": meta.get("analysis_run_id", "")},
+            {"Metric": "Competitor stage", "Value": project_data.get("competitor_status", "unknown")},
+            {"Metric": "Content gap stage", "Value": gap_analysis.get("status", "unknown")},
+            {"Metric": "Limitations", "Value": " | ".join(meta.get("warnings", []))},
+        ])
+        overview_rows.extend([
+            {"Metric": "Analysis status", "Value": meta.get('pipeline_status', 'unknown')},
+            {"Metric": "Crawl status", "Value": meta.get('crawl_status', 'unknown')},
+            {"Metric": "Observed crawl coverage", "Value": json.dumps(meta.get('coverage', {}), ensure_ascii=False)},
+        ])
         df_overview = pd.DataFrame(overview_rows)
 
         # ۲. آماده‌سازی شیت Technical & On-Page Audit
@@ -92,7 +105,8 @@ class ExcelReportGenerator:
                 "Title": iss.get("title", ""),
                 "Affected URL": iss.get("url", ""),
                 "Description": iss.get("description", ""),
-                "Recommendation": iss.get("recommendation", "")
+                "Recommendation": iss.get("recommendation", ""),
+                "Evidence": json.dumps(iss.get("evidence", {}), ensure_ascii=False)
             })
         df_audit = pd.DataFrame(audit_rows) if audit_rows else pd.DataFrame(
             columns=["Rule ID", "Severity", "Category", "Title", "Affected URL", "Description", "Recommendation"]
@@ -165,6 +179,57 @@ class ExcelReportGenerator:
             "Content Gaps": df_gaps,
             "Keyword Overlaps": df_overlaps
         }
+
+        def rows_frame(rows):
+            cleaned = [{key: json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value
+                        for key, value in row.items()} for row in rows]
+            return pd.DataFrame(cleaned)
+
+        keyword_analysis = project_data.get('keyword_analysis', {})
+        for name, rows in {
+            'Pages': project_data.get('crawled_pages', []),
+            'Crawl HTTP Results': project_data.get('crawl_observations', []),
+            'Keywords': keyword_analysis.get('keywords', []),
+            'Keyword Clusters': keyword_analysis.get('clusters', []),
+            'Keyword Opportunities': keyword_analysis.get('opportunities', []),
+            'Competitor Pages': [{k: v for k, v in row.items() if k != 'raw_text'} for row in project_data.get('competitor_analysis', [])],
+            'SEO Roadmap': project_data.get('seo_roadmap', []),
+        }.items():
+            if name in project_data or rows:
+                sheets_map[name] = rows_frame(rows)
+
+        extended = {
+            'Page SEO Details': project_data.get('page_details'),
+            'Keyword Children': project_data.get('keyword_inventory'),
+            'Keyword Strategy': project_data.get('keyword_strategies'),
+            'Keyword Mindmaps': project_data.get('keyword_mindmaps'),
+        }
+        if 'page_details' in project_data:
+            extended['Images'] = [dict(image, page_url=page['url']) for page in project_data['page_details'] for image in page.get('images', [])]
+            extended['HTML Tags'] = [{'url': page['url'], 'tag': tag, 'count': count}
+                                     for page in project_data['page_details'] for tag, count in page.get('tag_counts', {}).items()]
+            extended['HTTP Performance'] = [dict(page.get('performance', {}), url=page['url']) for page in project_data['page_details']]
+        if 'keyword_strategies' in project_data:
+            extended['Competitor Patterns'] = [p for plan in project_data['keyword_strategies'] for p in plan['competitor_patterns']]
+            extended['Analysis Limitations'] = [{'limitation': item} for item in project_data.get('analysis_limitations', [])]
+        if 'serp' in project_data:
+            serp = project_data['serp']
+            extended['SERP Results'] = [dict(row, keyword=entry['keyword'], source=serp.get('source'), retrieved_at=serp.get('retrieved_at'))
+                                        for entry in serp.get('results', []) for row in entry.get('organic_results', [])]
+        if 'competitor_selections' in project_data:
+            extended['Competitor Choices'] = [{'keyword': term, 'domains': domains}
+                                               for term, domains in project_data['competitor_selections'].items()]
+        for name, rows in extended.items():
+            if rows is not None:
+                sheets_map[name] = rows_frame(rows)
+
+        sheets_map['Run Metadata'] = rows_frame([meta])
+
+        # Force cells to text when external strings resemble spreadsheet formulas.
+        for frame in sheets_map.values():
+            for column in frame.columns:
+                frame[column] = frame[column].map(lambda value: "'" + value
+                    if isinstance(value, str) and value.startswith(('=', '+', '-', '@')) else value)
 
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             for sheet_name, df in sheets_map.items():

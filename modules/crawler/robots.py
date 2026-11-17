@@ -1,8 +1,9 @@
 
 import requests
+from modules.crawler.transport import RequestPolicy
 
 from urllib.robotparser import RobotFileParser
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 
 class RobotsManager:
@@ -20,9 +21,12 @@ class RobotsManager:
         self,
         base_url,
         user_agent="SEOIntelligenceBot",
-        timeout=15
+        timeout=15,
+        request_policy=None
     ):
-        self.base_url = base_url.rstrip("/")
+        self.request_policy = request_policy or RequestPolicy(max_bytes=512 * 1024)
+        parsed_base = urlsplit(base_url)
+        self.base_url = f"{parsed_base.scheme}://{parsed_base.netloc}"
         self.user_agent = user_agent
         self.timeout = timeout
 
@@ -50,12 +54,13 @@ class RobotsManager:
             "User-Agent": self.user_agent
         }
 
+        response = None
         try:
-            response = requests.get(
+            response = self.request_policy.get(requests,
                 self.robots_url,
                 headers=headers,
                 timeout=self.timeout,
-                allow_redirects=True
+                allow_redirects=False
             )
 
             self.status_code = response.status_code
@@ -101,6 +106,9 @@ class RobotsManager:
                 print(f"[ROBOTS ERROR] {self.error}")
                 return
 
+            if response.status_code != 200:
+                self.error = f"Unexpected robots HTTP status {response.status_code}"
+                return
             # Parse successful response.
             self.parser.parse(
                 response.text.splitlines()
@@ -137,6 +145,10 @@ class RobotsManager:
             self.allowed = False
 
             print(f"[ROBOTS ERROR] {error}")
+
+        finally:
+            if response is not None:
+                response.close()
 
     # -----------------------------------------
     # CHECK CRAWLING PERMISSION

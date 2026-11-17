@@ -12,7 +12,7 @@ from contextlib import contextmanager
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "seo_intelligence.db"
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 9
 
 DATABASE_TIMEOUT = 15
 BUSY_TIMEOUT_MS = 15000
@@ -717,6 +717,29 @@ def _initialize_once():
         migrate_v4(connection)
         migrate_v5(connection)
         migrate_v6(connection)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_results (
+                analysis_run_id INTEGER PRIMARY KEY REFERENCES analysis_runs(id) ON DELETE CASCADE,
+                format_version INTEGER NOT NULL DEFAULT 1,
+                result_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        register_schema_version(connection, 7)
+        connection.execute("""CREATE TABLE IF NOT EXISTS site_settings (
+            project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+            settings_json TEXT NOT NULL
+        )""")
+        register_schema_version(connection, 8)
+        connection.execute("""CREATE TABLE IF NOT EXISTS keyword_competitor_choices (
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            keyword TEXT NOT NULL,
+            domains_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(project_id, keyword)
+        )""")
+        register_schema_version(connection, 9)
 
         latest_version = connection.execute(
             "SELECT MAX(version) FROM schema_versions"

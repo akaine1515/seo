@@ -1,6 +1,10 @@
 
 import unittest
 import uuid
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+import database.connection as connection_module
 
 from database.repository import (
     ProjectRepository,
@@ -23,6 +27,12 @@ class TestRepositoryIntegration(unittest.TestCase):
     """
 
     def setUp(self):
+        self.temp_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_directory.cleanup)
+        self.db_patch = patch.object(connection_module, "DB_PATH", Path(self.temp_directory.name) / "test.db")
+        self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
+        connection_module.initialize_database()
         unique_id = uuid.uuid4().hex[:12]
 
         self.website_url = (

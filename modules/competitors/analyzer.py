@@ -1,147 +1,89 @@
-from typing import Dict, List, Any, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List
 from urllib.parse import urlparse, urljoin
+
+from bs4 import BeautifulSoup
+from modules.crawler.robots import RobotsManager
+from modules.competitors.discovery import CompetitorDiscovery
 
 
 class CompetitorAnalyzer:
-    """
-    Enterprise-grade Competitor Analysis Engine (Step 11).
-    Reuses existing CrawlerEngine and PageParser infrastructure to crawl,
-    extract structural content, analyze TF-IDF/keywords, and map internal links securely.
+    """Analyze selected pages through CrawlerEngine.request_page and PageParser.
+
+    Links use exact hostname equality (subdomains are external). Keyword metrics
+    are attached by the orchestrator after computing one shared corpus.
     """
 
     def __init__(self, crawler_engine: Any, page_parser: Any, tf_idf_analyzer: Any = None):
         self.crawler_engine = crawler_engine
         self.page_parser = page_parser
         self.tf_idf_analyzer = tf_idf_analyzer
-
-    @staticmethod
-    def _extract_competitor_domain(url: str) -> str:
-        """Extracts clean domain to identify internal links within the competitor's website."""
-        try:
-            parsed = urlparse(url)
-            hostname = parsed.hostname or ""
-            if hostname.startswith("www."):
-                hostname = hostname[4:]
-            return hostname.lower()
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _is_valid_http_url(url: str) -> bool:
-        """Checks if the URL is a valid http/https web link (excluding mailto, tel, javascript, etc.)."""
-        try:
-            parsed = urlparse(url)
-            return parsed.scheme in ("http", "https") and bool(parsed.netloc)
-        except Exception:
-            return False
+        self._robots = {}
 
     def analyze_competitor_page(self, url: str) -> Dict[str, Any]:
-        """
-        Crawls and extracts structural content from a single competitor URL safely.
-        """
-        if not url or not isinstance(url, str):
-            raise ValueError("Invalid URL provided for competitor analysis.")
-
+        result = {"url": url, "success": False,
+                  "retrieved_at": datetime.now(timezone.utc).isoformat()}
+        response = None
         try:
-            # ۱. خزش صفحه با استفاده از موتور خزشگر موجود
-            crawl_response = self.crawler_engine.fetch(url)
-            if not crawl_response or not crawl_response.get("success", False):
-                error_msg = crawl_response.get("error", "Unknown crawl failure") if crawl_response else "Crawl response returned None"
-                return {
-                    "url": url,
-                    "success": False,
-                    "error": error_msg
-                }
-
-            html_content = crawl_response.get("html", "")
-            final_url = crawl_response.get("final_url", url)
-
-            # ۲. استخراج ساختار صفحه با استفاده از پارسر موجود
-            parsed_data = self.page_parser.parse(html_content, final_url)
-
-            title = parsed_data.get("title", "")
-            meta_description = parsed_data.get("meta_description", "")
-            h1_list = parsed_data.get("h1", [])
-            h2_list = parsed_data.get("h2", [])
-            h3_list = parsed_data.get("h3", [])
-            body_text = parsed_data.get("body_text", "")
-            word_count = len(body_text.split()) if body_text else 0
-
-            # ۳. تحلیل لینک‌ها و حل دقیق لینک‌های نسبی با urljoin
-            raw_links = parsed_data.get("links", [])
-            comp_domain = self._extract_competitor_domain(final_url)
-            
-            internal_links = []
-            external_links_count = 0
-
-            for link in raw_links:
-                link_url = link.get("url", "")
+            if not CompetitorDiscovery._is_valid_url(url):
+                raise ValueError("Invalid competitor HTTP URL")
+            crawler = self.crawler_engine
+            crawler.base_url = crawler.normalize_url(url)
+            crawler.base_domain = urlparse(crawler.base_url).netloc
+            origin = urlparse(crawler.base_url)
+            origin_url = f"{origin.scheme}://{origin.netloc}/"
+            if origin_url not in self._robots:
+                self._robots[origin_url] = RobotsManager(origin_url, user_agent=crawler.USER_AGENT, request_policy=crawler.request_policy)
+            crawler.robots = self._robots[origin_url]
+            fetched = crawler.request_page(url)
+            response = fetched.get("response")
+            result.update(final_url=fetched.get("final_url", url),
+                          redirect_chain=fetched.get("redirect_chain", []))
+            if fetched.get("status") != "success" or response is None:
+                raise ValueError(fetched.get("status", "Missing crawl response"))
+            result["status_code"] = response.status_code
+            if not 200 <= response.status_code < 300:
+                raise ValueError(f"HTTP {response.status_code}")
+            content_type = response.headers.get("Content-Type", "").lower()
+            if content_type and "html" not in content_type:
+                raise ValueError("Response is not HTML")
+            if not response.text.strip():
+                raise ValueError("Empty HTML response")
+            parsed = self.page_parser.parse(response.text, result["final_url"],
+                                            response.status_code, response.headers)
+            links = BeautifulSoup(response.text, "lxml").find_all("a", href=True)
+            internal, external = set(), set()
+            host = urlparse(result["final_url"]).hostname
+            for link in links:
+                link_url = self.page_parser.normalize_link_url(urljoin(result["final_url"], link["href"]))
                 if not link_url:
                     continue
-
-                # حل لینک‌های نسبی نسبت به URL نهایی صفحه
-                absolute_link_url = urljoin(final_url, link_url)
-
-                # حذف لینک‌های غیر وب (مثل mailto، tel، javascript و غیره)
-                if not self._is_valid_http_url(absolute_link_url):
-                    continue
-
-                link_domain = self._extract_competitor_domain(absolute_link_url)
-                
-                if link_domain == comp_domain or not link_domain:
-                    if absolute_link_url not in internal_links:
-                        internal_links.append(absolute_link_url)
-                else:
-                    external_links_count += 1
-
-            analysis_result = {
-                "url": url,
-                "final_url": final_url,
-                "success": True,
-                "structure": {
-                    "title": title,
-                    "meta_description": meta_description,
-                    "h1": h1_list,
-                    "h2": h2_list,
-                    "h3": h3_list,
-                    "word_count": word_count
-                },
-                "linking": {
-                    "internal_links_count": len(internal_links),
-                    "internal_links": internal_links,
-                    "external_links_count": external_links_count
-                },
-                "raw_text": body_text
-            }
-
-            # ۴. تحلیل کلمات کلیدی (در صورت وجود تحلیل‌گر TF-IDF)
-            if self.tf_idf_analyzer and body_text:
-                try:
-                    keywords_analysis = self.tf_idf_analyzer.analyze_text(body_text)
-                    analysis_result["keywords_analysis"] = keywords_analysis
-                except Exception as e:
-                    analysis_result["keywords_analysis_error"] = str(e)
-
-            return analysis_result
-
-        except Exception as e:
-            return {
-                "url": url,
-                "success": False,
-                "error": f"Unexpected analysis exception: {str(e)}"
-            }
+                (internal if urlparse(link_url).hostname == host else external).add(link_url)
+            result.update(success=True, seo= {k: v for k, v in parsed.items() if k != "text_content"},
+                          performance=getattr(response, "seo_metrics", {}), raw_text=parsed["text_content"],
+                          structure={"title": parsed["title"],
+                                     "meta_description": parsed["meta_description"],
+                                     "h1": parsed["h1_list"], "h2": parsed["h2_list"],
+                                     "h3": parsed["h3_list"], "word_count": parsed["word_count"]},
+                          linking={"internal_links": sorted(internal),
+                                   "internal_links_count": len(internal),
+                                   "external_links_count": len(external)})
+            if self.tf_idf_analyzer:
+                result["keyword_warning"] = "Compute TF-IDF over a shared corpus in the pipeline."
+        except Exception as error:
+            result.update(success=False, error=str(error))
+        finally:
+            if response is not None:
+                response.close()
+        return result
 
     def analyze_batch(self, competitor_urls: List[str]) -> List[Dict[str, Any]]:
-        """
-        Analyzes a batch of competitor URLs independently, ensuring failure in one page 
-        does not halt or crash the entire batch.
-        """
+        """Keep failures local to each URL, including invalid batch entries."""
         if not isinstance(competitor_urls, list):
             raise TypeError("competitor_urls must be a list.")
-
         results = []
         for url in competitor_urls:
-            result = self.analyze_competitor_page(url)
-            results.append(result)
-
+            if self.crawler_engine._check_cancelled():
+                break
+            results.append(self.analyze_competitor_page(url))
         return results
