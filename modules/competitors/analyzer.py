@@ -29,8 +29,8 @@ class CompetitorAnalyzer:
                 raise ValueError("Invalid competitor HTTP URL")
             crawler = self.crawler_engine
             crawler.base_url = crawler.normalize_url(url)
-            crawler.base_domain = urlparse(crawler.base_url).netloc
             origin = urlparse(crawler.base_url)
+            crawler.base_domain = origin.hostname.lower()
             origin_url = f"{origin.scheme}://{origin.netloc}/"
             if origin_url not in self._robots:
                 self._robots[origin_url] = RobotsManager(origin_url, user_agent=crawler.USER_AGENT, request_policy=crawler.request_policy)

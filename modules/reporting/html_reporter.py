@@ -108,6 +108,13 @@ class HTMLReportGenerator:
                              + "<br>Observed coverage: " + str(meta.get('coverage', {}))
                              + "<br>" + "<br>".join(meta.get("warnings", [])))
         availability_html += "<br>Competitors: " + str(project_data.get("competitor_status", "unknown"))
+        if meta.get('stage_result_id'):
+            availability_html += (f"<br>Independent competitor stage #{meta['stage_result_id']}"
+                f" | Stage status: {meta.get('stage_status', 'unknown')}"
+                f" | Source crawl run #{meta.get('source_analysis_run_id')}"
+                f" | Own-site crawl timestamp: {meta.get('finished_at', '')}"
+                f" | Stage timestamp: {meta.get('stage_finished_at', '')}"
+                "<br>Own-site crawl evidence reused; the website was not crawled again.")
         availability_html += " | Content gaps: " + str(gap_analysis.get("status", "unknown"))
         empty_gap_message = ("No content gaps detected in analyzed evidence."
                              if gap_analysis.get("status") == "completed" else

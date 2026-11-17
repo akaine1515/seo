@@ -81,6 +81,7 @@ class RecoveryTests(unittest.TestCase):
                 conn.execute('DROP TABLE analysis_results')
                 conn.execute('DROP TABLE site_settings')
                 conn.execute('DROP TABLE keyword_competitor_choices')
+                conn.execute('DROP TABLE analysis_stage_results')
                 conn.execute('DELETE FROM schema_versions WHERE version>=7')
             CrawlEventRepository.log_event(run, 'pipeline_completed', details_json=json.dumps(old))
             db.initialize_database()
@@ -91,7 +92,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertNotIn('raw_text', AnalysisResultRepository.load(run)['competitor_analysis'][0])
             self.assertIn('raw_text', old['competitor_analysis'][0])
             with db.database_connection() as conn:
-                self.assertEqual(conn.execute('SELECT MAX(version) FROM schema_versions').fetchone()[0], 9)
+                self.assertEqual(conn.execute('SELECT MAX(version) FROM schema_versions').fetchone()[0], 10)
                 self.assertFalse(conn.execute('PRAGMA foreign_key_check').fetchall())
             ProjectRepository.delete_project(project)
             self.assertIsNone(AnalysisResultRepository.load(run))

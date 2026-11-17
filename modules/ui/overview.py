@@ -90,7 +90,7 @@ class Overview(QWidget):
         title_row.addWidget(self.state_badge)
         layout.addLayout(title_row)
         self.demo = label('Demo · داده نمونه برای بررسی طراحی؛ تحلیل واقعی سایت نیست')
-        self.demo.setStyleSheet('color: #2449BF; background: #ECF0FD; padding: 10px; border-radius: 6px;')
+        self.demo.setStyleSheet('color: #12647C; background: #D8F4F2; padding: 10px; border-radius: 8px;')
         self.demo.hide()
         layout.addWidget(self.demo)
         metrics = QHBoxLayout()
@@ -137,7 +137,7 @@ class Overview(QWidget):
         self.state_badge.setText(STATUS_TEXT.get(state, STATUS_TEXT['unknown']))
         fg, bg = ('#166345', '#E9F6EF') if state == 'completed' else (
             ('#A82736', '#FDECEF') if state in ('error', 'failed') else
-            ('#83530A', '#FFF4DB') if state in ('partial', 'cancelled') else ('#526175', '#EDF0F5'))
+            ('#83530A', '#FFF4DB') if state in ('partial', 'cancelled') else ('#245D70', '#DDF2F3'))
         self.state_badge.setStyleSheet(f'color:{fg};background:{bg};border-radius:6px;')
         if message:
             self.summary.setText(message)

@@ -45,7 +45,8 @@ class MainWindow(QMainWindow):
         self.collapse_btn.setText('‹' if self._sidebar_compact else 'جمع کردن منو  ›')
         for btn in self.nav_buttons:
             full = btn.property('full_text')
-            btn.setText(full[:9] if self._sidebar_compact else full)
+            btn.setText(btn.fontMetrics().elidedText(full, Qt.TextElideMode.ElideRight, 55)
+                        if self._sidebar_compact else full)
 
     def log_message(self, message: str):
         from html import escape
@@ -88,6 +89,7 @@ class MainWindow(QMainWindow):
 
     def clear_result_view(self):
         self.last_result_data = {}
+        self.stage_banner.hide()
         self.site_evidence.present([])
         self.keyword_evidence.present([])
         self.competitor_selection.present({})
@@ -217,6 +219,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "تاریخچه", str(error))
 
     def compare_saved_run(self):
+        if self.last_result_data.get('meta', {}).get('stage_result_id'):
+            QMessageBox.information(self, 'مقایسه خزش‌ها', 'این نتیجه، بررسی مستقل رقباست. برای مقایسه وضعیت سایت، دو اجرای کامل خزش را از تاریخچه باز کنید.')
+            return
         current = self.last_result_data.get('meta', {}).get('analysis_run_id')
         if not current:
             return
@@ -233,6 +238,60 @@ class MainWindow(QMainWindow):
             self.switch_tab(4)
         except Exception as error:
             QMessageBox.warning(self, "مقایسه", str(error))
+
+    def open_competitor_history(self):
+        if self.worker and self.worker.isRunning():
+            return
+        project_id = self.site_selector.currentData()
+        if not project_id:
+            return
+        try:
+            from database.stages import StageResultRepository
+            rows = StageResultRepository.list_for_project(project_id)
+            if not rows:
+                QMessageBox.information(self, 'تاریخچه رقبا', 'هنوز بررسی مستقلی برای این سایت ذخیره نشده است.')
+                return
+            from modules.ui.overview import data_time
+            choices = [f"#{r['id']} · خزش منبع {r['source_analysis_run_id']} · {self.status_text(r['status'])} · \u2066{data_time(r['started_at'])}\u2069" for r in rows]
+            selected, accepted = QInputDialog.getItem(self, 'تاریخچه مستقل رقبا', 'بررسی موردنظر:', choices, 0, False)
+            if accepted:
+                result = StageResultRepository.load(rows[choices.index(selected)]['id'])
+                if result is None:
+                    raise ValueError('این بررسی نتیجه قابل نمایش ندارد؛ وضعیت شکست یا اجرای ناتمام در تاریخچه ثبت شده است.')
+                self.on_analysis_finished(result)
+        except Exception as error:
+            QMessageBox.warning(self, 'تاریخچه رقبا', str(error))
+
+    def start_competitor_stage(self):
+        if self.worker and self.worker.isRunning():
+            return
+        meta = self.last_result_data.get('meta', {})
+        project_id = self.site_selector.currentData()
+        if not meta.get('analysis_run_id') or meta.get('project_id') != project_id:
+            QMessageBox.warning(self, 'خزش منبع لازم است', 'ابتدا نتیجه ذخیره‌شده همین سایت را از تاریخچه باز کنید یا تحلیل سایت را اجرا کنید.')
+            return
+        try:
+            from modules.serp.google_search import FileSERPProvider
+            path = self.serp_path_input.text().strip()
+            self.orchestrator.serp_provider = FileSERPProvider(path) if path else None
+        except (ValueError, OSError) as error:
+            QMessageBox.warning(self, 'منبع SERP', str(error))
+            return
+        self.worker = SEOAnalysisWorker(self.url_input.text(), {'project_id': project_id},
+                                       self.orchestrator, source_run_id=meta['analysis_run_id'])
+        self.worker.finished.connect(self.worker_finished)
+        self.worker.progress_updated.connect(self.on_progress_update)
+        self.worker.analysis_finished.connect(self.on_analysis_finished)
+        self.worker.error_occurred.connect(self.on_error)
+        self.run_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.site_selector.setEnabled(False)
+        self.export_excel_btn.setEnabled(False)
+        self.export_html_btn.setEnabled(False)
+        self.progress_bar.setRange(0, 0)
+        self.overview_widget.set_state('running', 'بررسی صفحات منتخب رقبا با داده ذخیره‌شده سایت؛ خزش سایت تکرار نمی‌شود.')
+        self.navigate('run')
+        self.worker.start()
 
     def start_analysis(self):
         if self.worker and self.worker.isRunning():
@@ -298,6 +357,10 @@ class MainWindow(QMainWindow):
         self.competitor_selection.present(result_data)
         self.strategy_map.present(result_data)
         self.overview_widget.present(result_data)
+        meta = result_data.get('meta', {})
+        self.stage_banner.setVisible(bool(meta.get('stage_result_id')))
+        from modules.ui.overview import data_time
+        self.stage_banner.setText(f"بررسی مستقل رقبا #{meta.get('stage_result_id')} · خزش منبع #{meta.get('analysis_run_id')} (\u2066{data_time(meta.get('finished_at'))}\u2069) · وضعیت مرحله: {self.status_text(meta.get('stage_status', 'unknown'))} · سایت دوباره خزش نشده است.")
         status = self.status_text(result_data.get('meta', {}).get('pipeline_status', 'unknown'))
         self.run_message.setText('نتیجه ذخیره شد · ' + status + '؛ میزان پوشش را در نمای کلی بررسی کنید.')
         self.site_status_label.setText(self.site_selector.currentText() + '  ·  ' + status)

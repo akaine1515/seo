@@ -114,6 +114,28 @@ class PipelineTests(unittest.TestCase):
             with patch.object(crawler, 'request_page', side_effect=TimeoutError('timeout')):
                 self.assertFalse(CompetitorAnalyzer(crawler, PageParser()).analyze_competitor_page('https://rival.com')['success'])
 
+    def test_competitor_port_preserves_host_scope_and_external_redirect_boundary(self):
+        connection_module.initialize_database()
+        seen = []
+        def get(session, url, **kwargs):
+            seen.append(url)
+            response = FakeResponse(url, '<html><title>Rival</title><h1>Guide</h1><p>Useful content</p></html>')
+            if url.endswith('/redirect'):
+                response.status_code = 302
+                response.headers['Location'] = 'https://other.com/landing'
+            return response
+        with patch.object(FakeSession, 'get', get), CrawlerEngine(1) as crawler:
+            analyzer = CompetitorAnalyzer(crawler, PageParser())
+            for url in ('https://rival.com/article', 'https://rival.com:8443/article'):
+                with self.subTest(url=url):
+                    result = analyzer.analyze_competitor_page(url)
+                    self.assertTrue(result['success'], result)
+                    self.assertEqual(crawler.base_domain, 'rival.com')
+            result = analyzer.analyze_competitor_page('https://rival.com:8443/redirect')
+            self.assertFalse(result['success'])
+            self.assertEqual(result['error'], 'external_redirect')
+            self.assertNotIn('https://other.com/landing', seen)
+
     def test_gap_domain_normalization_and_invalid_ports(self):
         self.assertEqual(ContentGapStrategyEngine._extract_clean_domain('https://www.web.com'), 'web.com')
         for url in ['https://', 'https://bad.com:abc', 'https://bad.com:99999', 'https://-bad.com', 'https://bad..com']:
