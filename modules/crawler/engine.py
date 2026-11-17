@@ -1,3 +1,4 @@
+from modules.crawler.transport import RequestPolicy
 import json
 from urllib.parse import urljoin, urlparse, urlunparse, urldefrag
 
@@ -60,6 +61,14 @@ class CrawlerEngine:
         self.max_pages = max(1, int(max_pages))
         self.timeout = max(1, int(timeout))
 
+        self.request_policy = RequestPolicy()
+        self.max_depth = None
+        self.excluded_paths = []
+        self.progress_callback = None
+        self.cancel_event = None
+        self.scope_skipped = set()
+        self.http_results = []
+        self.sitemap_urls = []
         self.session = requests.Session()
 
         self.session.headers.update({
@@ -115,7 +124,7 @@ class CrawlerEngine:
         self._cancel_requested = True
 
     def _check_cancelled(self):
-        return self._cancel_requested
+        return self._cancel_requested or (self.cancel_event is not None and self.cancel_event.is_set())
 
     def _heartbeat_or_raise(self):
         """
@@ -274,6 +283,11 @@ class CrawlerEngine:
         if not self.is_internal_url(normalized):
             return False
 
+        if ((self.max_depth is not None and depth > self.max_depth)
+                or any(urlparse(normalized).path.startswith(path) for path in self.excluded_paths)):
+            self.scope_skipped.add(normalized)
+            return False
+
         if normalized in self.visited:
             return False
 
@@ -417,6 +431,9 @@ class CrawlerEngine:
                     "redirect_chain": redirect_chain,
                 }
 
+            if any(urlparse(current_url).path.startswith(path) for path in self.excluded_paths):
+                return {"status": "excluded", "response": None, "final_url": current_url,
+                        "redirect_chain": redirect_chain}
             if not self.is_internal_url(current_url):
                 return {
                     "status": "external_redirect",
@@ -433,12 +450,15 @@ class CrawlerEngine:
                     "redirect_chain": redirect_chain,
                 }
 
-            response = self.session.get(
-                current_url,
+            response = self.request_policy.get(
+                self.session, current_url,
                 timeout=self.timeout,
                 allow_redirects=False
             )
 
+            self.http_results.append({"url": initial_url, "final_url": current_url,
+                                      "status_code": response.status_code,
+                                      "redirect_chain": list(redirect_chain)})
             if response.status_code not in self.REDIRECT_CODES:
                 return {
                     "status": "success",
@@ -719,6 +739,9 @@ class CrawlerEngine:
                     response_headers=response.headers
                 )
 
+                self.log_event("page_observation", "Parsed page evidence", final_url,
+                               details={**{k: v for k, v in page_data.items() if k != 'text_content'},
+                                        'performance': getattr(response, 'seo_metrics', {})})
                 page_data["url"] = final_url
                 page_data["final_url"] = final_url
                 page_data["content_type"] = content_type
@@ -1005,7 +1028,8 @@ class CrawlerEngine:
 
                 self.robots = RobotsManager(
                     self.base_url,
-                    user_agent=self.USER_AGENT
+                    user_agent=self.USER_AGENT,
+                    request_policy=self.request_policy
                 )
 
                 if not self.robots.can_fetch(self.base_url):
@@ -1050,11 +1074,13 @@ class CrawlerEngine:
 
                     try:
 
+                        self.sitemap_manager.request_policy = self.request_policy
                         sitemap_urls = self.sitemap_manager.discover(
                             self.base_url,
                             self.robots
                         )
 
+                        self.sitemap_urls = list(sitemap_urls)
                         sitemap_added = 0
 
                         for sitemap_url in sitemap_urls:
@@ -1152,6 +1178,9 @@ class CrawlerEngine:
                         "parent_url"
                     )
 
+                    if self.progress_callback:
+                        self.progress_callback(f"Checking URL {self.stats['attempted'] + 1}: {normalized_url}",
+                                               10 + int(30 * self.stats['attempted'] / self.max_pages))
                     status = self.crawl_page(
                         normalized_url,
                         depth=depth,

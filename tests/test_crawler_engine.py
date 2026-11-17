@@ -106,7 +106,7 @@ class FakeSession:
 class FakeRobotsManager:
     """Allow all test URLs without network access."""
 
-    def __init__(self, base_url, user_agent=None):
+    def __init__(self, base_url, user_agent=None, request_policy=None):
         self.base_url = base_url
         self.user_agent = user_agent
 

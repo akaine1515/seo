@@ -1,5 +1,9 @@
+from core.domains import site_domain
 from typing import Dict, List, Any, Set
 from urllib.parse import urlparse
+import math
+from modules.keywords.analyzer import KeywordAnalyzer
+from modules.competitors.discovery import CompetitorDiscovery
 
 
 class ContentGapStrategyEngine:
@@ -37,19 +41,10 @@ class ContentGapStrategyEngine:
     @staticmethod
     def _extract_clean_domain(url: str) -> str:
         """Safely extracts clean root domain from a URL."""
-        if not url or not isinstance(url, str):
+        if not isinstance(url, str) or not CompetitorDiscovery._is_valid_url(url):
             return ""
-        try:
-            parsed = urlparse(url.strip())
-            hostname = parsed.hostname or parsed.path.split("/")[0]
-            if "@" in hostname:
-                hostname = hostname.split("@")[-1]
-            if ":" in hostname:
-                hostname = hostname.split(":")[0]
-            hostname = hostname.lower().strip().lstrip("www.")
-            return hostname
-        except Exception:
-            return ""
+        hostname = urlparse(url).hostname.lower().rstrip(".")
+        return hostname[4:] if hostname.startswith("www.") else hostname
 
     @staticmethod
     def _extract_site_terms(our_tf_idf_results: Dict[Any, Dict[str, Any]], min_threshold: float = 0.01) -> Set[str]:
@@ -66,8 +61,8 @@ class ContentGapStrategyEngine:
                     continue
                 if isinstance(metrics, dict):
                     score = metrics.get("tf_idf_score", 0.0)
-                    if isinstance(score, (int, float)) and score >= min_threshold:
-                        site_terms.add(term.lower().strip())
+                    if isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score) and score >= min_threshold:
+                        site_terms.add(KeywordAnalyzer.normalize_keyword(term))
         return site_terms
 
     def analyze_gaps(
@@ -83,10 +78,15 @@ class ContentGapStrategyEngine:
         if not isinstance(competitors_analysis, list):
             raise TypeError("competitors_analysis must be a list.")
 
+        if (isinstance(min_coverage_threshold, bool)
+                or not isinstance(min_coverage_threshold, (int, float))
+                or not math.isfinite(min_coverage_threshold) or min_coverage_threshold < 0):
+            raise ValueError("min_coverage_threshold must be finite and non-negative.")
         our_terms = self._extract_site_terms(our_tf_idf_results, min_threshold=min_coverage_threshold)
 
         # جمع‌آوری دامنه‌های رقبا برای هر کلمه کلیدی (جلوگیری از شمارش تکراری چند صفحه از یک دامنه)
         competitor_keyword_map: Dict[str, Set[str]] = {}
+        evidence = {}
 
         for comp in competitors_analysis:
             if not isinstance(comp, dict) or not comp.get("success", False):
@@ -94,7 +94,7 @@ class ContentGapStrategyEngine:
             
             # استفاده از final_url یا url برای استخراج امن دامنه رقیب
             target_url = comp.get("final_url") or comp.get("url", "")
-            comp_domain = self._extract_clean_domain(target_url)
+            comp_domain = site_domain(target_url) if self._extract_clean_domain(target_url) else ""
             if not comp_domain:
                 continue
 
@@ -107,7 +107,7 @@ class ContentGapStrategyEngine:
                     if isinstance(term, str):
                         # بررسی اینکه رقیب هم پوشش معتبری روی این کلمه داشته باشد
                         score = metrics.get("tf_idf_score", 0.0) if isinstance(metrics, dict) else 0.0
-                        if isinstance(score, (int, float)) and score >= min_coverage_threshold:
+                        if isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score) and score >= min_coverage_threshold:
                             terms_found.append(term)
             elif isinstance(keywords_analysis, list):
                 for item in keywords_analysis:
@@ -117,7 +117,7 @@ class ContentGapStrategyEngine:
                             terms_found.append(term)
 
             for term in terms_found:
-                clean_term = term.lower().strip()
+                clean_term = KeywordAnalyzer.normalize_keyword(term)
                 if len(clean_term) < 3:
                     continue
 
@@ -125,16 +125,21 @@ class ContentGapStrategyEngine:
                     competitor_keyword_map[clean_term] = set()
                 
                 competitor_keyword_map[clean_term].add(comp_domain)
+                evidence.setdefault(clean_term, set()).add(target_url)
 
         overlap_keywords = []
         content_gaps = []
 
         for term, domains_set in competitor_keyword_map.items():
             presence_count = len(domains_set)
-            comp_domains_list = list(domains_set)
+            comp_domains_list = sorted(domains_set)
 
             if term in our_terms:
                 overlap_keywords.append({
+                    "term": term,
+                    "evidence_urls": sorted(evidence[term]),
+                    "competitor_domains_count": presence_count,
+                    "competitor_domains": comp_domains_list,
                     "keyword": term,
                     "competitors_count": presence_count,
                     "competing_domains": comp_domains_list,
@@ -145,9 +150,15 @@ class ContentGapStrategyEngine:
                     # امتیاز اولویت داخلی آماری (Heuristic Priority)
                     heuristic_priority = "High (Statistical)" if presence_count >= 3 else "Medium (Statistical)"
                     content_gaps.append({
+                        "term": term,
+                        "evidence_urls": sorted(evidence[term]),
+                        "competitor_domains_count": presence_count,
+                        "competitor_domains": comp_domains_list,
                         "keyword": term,
                         "competitors_count": presence_count,
                         "competing_domains": comp_domains_list,
+                        "priority": heuristic_priority,
+                        "recommended_action": "Review existing coverage before expanding a page or creating content.",
                         "heuristic_priority": heuristic_priority,
                         "recommendation": "Potential content gap identified. Review for new content creation or page expansion."
                     })

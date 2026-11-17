@@ -1,3 +1,4 @@
+from modules.crawler.transport import RequestPolicy
 
 from collections import deque
 from urllib.parse import urlsplit, urlunsplit
@@ -37,6 +38,7 @@ class SitemapManager:
         user_agent="SEOIntelligenceBot",
         session=None
     ):
+        self.request_policy = RequestPolicy(max_bytes=max_response_bytes)
         self.timeout = timeout
         self.max_sitemaps = max_sitemaps
         self.max_urls = max_urls
@@ -130,15 +132,16 @@ class SitemapManager:
         Raises exceptions for request, HTTP and size errors.
         """
 
-        response = self.session.get(
-            sitemap_url,
+        response = self.request_policy.get(
+            self.session, sitemap_url,
             timeout=self.timeout,
-            stream=True,
-            allow_redirects=True
+            allow_redirects=False
         )
 
         try:
             response.raise_for_status()
+            if response.status_code != 200:
+                raise ValueError("Unexpected sitemap HTTP status")
 
             chunks = []
             total_size = 0

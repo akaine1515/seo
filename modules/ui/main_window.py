@@ -1,11 +1,7 @@
-import os
 from typing import Dict, Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QLineEdit, QPushButton, QProgressBar, 
-    QTextEdit, QFileDialog, QMessageBox, QTabWidget,
-    QTableWidget, QTableWidgetItem, QFrame, QSplitter
+    QMainWindow, QFileDialog, QMessageBox, QInputDialog, QTableWidgetItem,
 )
 from modules.ui.worker import SEOAnalysisWorker
 from modules.reporting.excel_reporter import ExcelReportGenerator
@@ -13,10 +9,7 @@ from modules.reporting.html_reporter import HTMLReportGenerator
 
 
 class MainWindow(QMainWindow):
-    """
-    Enterprise-grade Desktop UI for SEO Intelligence V2.
-    Inspired by professional SEO platforms (Crawlix & SEO Engine).
-    """
+    """Persian desktop presentation backed by application services."""
 
     def __init__(self, orchestrator_engine: Any = None):
         super().__init__()
@@ -24,176 +17,290 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.last_result_data = {}
 
-        self.setWindowTitle("SEO Intelligence V2 - Enterprise SEO Audit & Strategy Suite")
-        self.resize(1300, 800)
-        self.setStyleSheet("""
-            QMainWindow { background-color: #0f172a; color: #f8fafc; }
-            QLabel { color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
-            QLineEdit { background-color: #1e293b; color: #ffffff; border: 1px solid #334155; border-radius: 6px; padding: 10px; font-size: 14px; }
-            QPushButton { background-color: #2563eb; color: white; border: none; border-radius: 6px; padding: 10px 20px; font-weight: bold; font-size: 14px; }
-            QPushButton:hover { background-color: #1d4ed8; }
-            QPushButton:disabled { background-color: #475569; color: #94a3b8; }
-            QTabWidget::pane { border: 1px solid #334155; background: #1e293b; border-radius: 8px; }
-            QTabBar::tab { background: #0f172a; color: #94a3b8; padding: 10px 20px; border-top-left-radius: 6px; border-top-right-radius: 6px; font-weight: bold; }
-            QTabBar::tab:selected { background: #1e293b; color: #ffffff; border-bottom: 2px solid #2563eb; }
-            QTableWidget { background-color: #1e293b; color: #f8fafc; gridline-color: #334155; border: none; font-size: 13px; }
-            QHeaderView::section { background-color: #0f172a; color: #cbd5e1; padding: 8px; border: none; font-weight: bold; }
-            QProgressBar { background-color: #1e293b; border: 1px solid #334155; border-radius: 6px; text-align: center; color: white; font-weight: bold; }
-            QProgressBar::chunk { background-color: #2563eb; border-radius: 5px; }
-        """)
+        from modules.ui.design_system import STYLES, ui_font
+        from modules.ui.shell import build_shell
+        self.setWindowTitle("SEO Intelligence V2 | Product by Ashkan")
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setFont(ui_font())
+        self.resize(1440, 980)
+        self.setMinimumSize(980, 700)
+        self.setStyleSheet(STYLES)
+        build_shell(self)
+        self.refresh_sites()
 
-        self._init_ui()
-
-    def _init_ui(self):
-        central_widget = QWidget(self)
-        self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(15)
-
-        # ۱. سایدبار ناوبری سمت چپ
-        sidebar = QFrame()
-        sidebar.setFixedWidth(240)
-        sidebar.setStyleSheet("background-color: #1e293b; border-radius: 10px; padding: 10px;")
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        logo_label = QLabel("🚀 SEO Intelligence V2")
-        logo_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #38bdf8; margin-bottom: 20px;")
-        sidebar_layout.addWidget(logo_label)
-
-        nav_items = ["Overview & Health", "Technical Audit", "Keywords & Clusters", "Competitors & Gaps", "Execution Logs"]
-        self.nav_buttons = []
-        for i, item in enumerate(nav_items):
-            btn = QPushButton(item)
-            btn.setStyleSheet("text-align: left; background-color: transparent; color: #cbd5f1; padding: 12px; border-radius: 6px;")
-            btn.clicked.connect(lambda checked=False, idx=i: self.switch_tab(idx))
-            sidebar_layout.addWidget(btn)
-            self.nav_buttons.append(btn)
-
-        main_layout.addWidget(sidebar)
-
-        # ۲. پنل اصلی سمت راست
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(15)
-
-        # نوار بالای ورودی URL و دکمه اجرا
-        top_bar = QHBoxLayout()
-        self.url_input = QLineEdit(self)
-        self.url_input.setPlaceholderText("Enter target URL (e.g., https://example.com)...")
-        
-        self.run_btn = QPushButton("Start Full SEO Audit")
-        self.run_btn.setStyleSheet("background-color: #10b981; color: white; padding: 10px 25px;")
-        self.run_btn.clicked.connect(self.start_analysis)
-
-        top_bar.addWidget(QLabel("Target URL:"))
-        top_bar.addWidget(self.url_input)
-        top_bar.addWidget(self.run_btn)
-        right_layout.addLayout(top_bar)
-
-        # نوار پیشرفت زنده
-        self.progress_bar = QProgressBar(self)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(22)
-        right_layout.addWidget(self.progress_bar)
-
-        # تب‌های محتوایی (مطابق ساختار حرفه‌ای)
-        self.tabs = QTabWidget(self)
-        self.tabs.tabBar().setVisible(False)  # مخفی کردن تب‌بار بالا چون با سایدبار کنترل می‌شود
-
-        # تب ۱: نمای کلی و سلامت
-        self.overview_widget = QWidget()
-        self._init_overview_tab()
-        self.tabs.addTab(self.overview_widget, "Overview")
-
-        # تب ۲: ممیزی فنی
-        self.technical_table = QTableWidget(0, 6)
-        self.technical_table.setHorizontalHeaderLabels(["Rule ID", "Severity", "Category", "Title", "Affected URL", "Recommendation"])
-        self.tabs.addTab(self.technical_table, "Technical Audit")
-
-        # تب ۳: کلمات کلیدی و خوشه‌ها
-        self.keywords_table = QTableWidget(0, 4)
-        self.keywords_table.setHorizontalHeaderLabels(["Keyword Term", "Frequency", "TF-IDF Score", "Cluster"])
-        self.tabs.addTab(self.keywords_table, "Keywords")
-
-        # تب ۴: رقبا و شکاف محتوایی
-        self.competitors_table = QTableWidget(0, 4)
-        self.competitors_table.setHorizontalHeaderLabels(["Competitor Domain", "Competitiveness Index", "Keywords Count", "Content Gap Action"])
-        self.tabs.addTab(self.competitors_table, "Competitors")
-
-        # تب ۵: لاگ‌های اجرایی
-        self.log_output = QTextEdit(self)
-        self.log_output.setReadOnly(True)
-        self.log_output.setStyleSheet("font-family: Consolas; font-size: 13px; background-color: #0f172a; color: #38bdf8;")
-        self.tabs.addTab(self.log_output, "Logs")
-
-        right_layout.addWidget(self.tabs)
-
-        # دکمه‌های خروجی پایین صفحه
-        export_layout = QHBoxLayout()
-        self.export_excel_btn = QPushButton("Export Multi-Sheet Excel Report")
-        self.export_excel_btn.setEnabled(False)
-        self.export_excel_btn.clicked.connect(self.export_excel)
-
-        self.export_html_btn = QPushButton("Export Interactive HTML Dashboard")
-        self.export_html_btn.setEnabled(False)
-        self.export_html_btn.clicked.connect(self.export_html)
-
-        export_layout.addStretch()
-        export_layout.addWidget(self.export_excel_btn)
-        export_layout.addWidget(self.export_html_btn)
-        right_layout.addLayout(export_layout)
-
-        main_layout.addWidget(right_panel)
-
-    def _init_overview_tab(self):
-        layout = QVBoxLayout(self.overview_widget)
-        self.kpi_label = QLabel("Welcome! Enter a target domain and click 'Start Full SEO Audit' to begin deep algorithmic analysis.")
-        self.kpi_label.setStyleSheet("font-size: 16px; color: #94a3b8; padding: 20px;")
-        layout.addWidget(self.kpi_label)
-        layout.addStretch()
+    def navigate(self, destination):
+        self.switch_tab(self.page_indices[destination])
 
     def switch_tab(self, index: int):
         self.tabs.setCurrentIndex(index)
-        for i, btn in enumerate(self.nav_buttons):
-            if i == index:
-                btn.setStyleSheet("text-align: left; background-color: #334155; color: #38bdf8; padding: 12px; border-radius: 6px; font-weight: bold;")
-            else:
-                btn.setStyleSheet("text-align: left; background-color: transparent; color: #cbd5e1; padding: 12px; border-radius: 6px;")
+        self.breadcrumb.setText('فضای کاری  /  ' + self.tabs.tabText(index))
+        for btn in self.nav_buttons:
+            btn.setChecked(btn.property('page_index') == index)
+
+    def toggle_sidebar(self):
+        self._sidebar_compact = not self._sidebar_compact
+        self.sidebar.setFixedWidth(112 if self._sidebar_compact else 224)
+        self.brand_label.setText('SEO V2' if self._sidebar_compact else 'SEO Intelligence')
+        self.brand_subtitle.setVisible(not self._sidebar_compact)
+        self.collapse_btn.setText('‹' if self._sidebar_compact else 'جمع کردن منو  ›')
+        for btn in self.nav_buttons:
+            full = btn.property('full_text')
+            btn.setText(full[:9] if self._sidebar_compact else full)
 
     def log_message(self, message: str):
-        self.log_output.append(message)
+        from html import escape
+        self.log_output.append(escape(message))
+
+    def refresh_sites(self):
+        from database.connection import initialize_database
+        from database.sites import SiteRepository
+        try:
+            initialize_database()
+            self._sites = {s['id']: s for s in SiteRepository.list_sites()}
+            self.site_selector.blockSignals(True)
+            self.site_selector.clear()
+            self.site_selector.addItem("انتخاب یا ثبت سایت", None)
+            for site in self._sites.values():
+                self.site_selector.addItem(site['name'] + (" (غیرفعال)" if not site['is_active'] else ""), site['id'])
+            self.site_selector.blockSignals(False)
+        except Exception as error:
+            self.log_message(f"Site list unavailable: {error}")
+
+    def select_site(self):
+        site = self._sites.get(self.site_selector.currentData())
+        if site is None:
+            self.url_input.clear()
+            self.site_status_label.setText('سایتی انتخاب نشده است')
+            self.clear_result_view()
+            return
+        if self.last_result_data.get('meta', {}).get('project_id') != site['id']:
+            self.clear_result_view()
+        self.url_input.setText(site['website_url'])
+        from database.sites import SiteRepository
+        status = SiteRepository.status(site['id'])
+        self.site_status_label.setText(site['name'] + '  ·  ' + ('فعال' if site['is_active'] else 'غیرفعال') + '  ·  ' + self.status_text(status))
+        settings = site['settings']
+        self.max_pages_input.setValue(settings['max_pages'])
+        self.max_depth_input.setValue(settings['max_depth'])
+        self.timeout_input.setValue(settings['timeout'])
+        self.interval_input.setValue(settings['request_interval'])
+        self.excluded_input.setText(','.join(settings['excluded_paths']))
+
+    def clear_result_view(self):
+        self.last_result_data = {}
+        self.site_evidence.present([])
+        self.keyword_evidence.present([])
+        self.competitor_selection.present({})
+        self.strategy_map.present({})
+        self.overview_widget.present({})
+        self.export_excel_btn.setEnabled(False)
+        self.export_html_btn.setEnabled(False)
+        self.run_message.setText('آماده شروع؛ تنظیمات سایت فعال را بررسی کنید.')
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.log_output.clear()
+        for table in (self.technical_table, self.keywords_table, self.competitors_table):
+            table.setRowCount(0)
+
+    def crawl_settings(self):
+        return dict(max_pages=self.max_pages_input.value(), max_depth=self.max_depth_input.value(),
+                    timeout=self.timeout_input.value(), request_interval=self.interval_input.value(),
+                    excluded_paths=[p.strip() for p in self.excluded_input.text().split(',') if p.strip()])
+
+    def change_site(self, operation):
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, "تحلیل در حال اجراست", "پس از پایان تحلیل می‌توانید سایت را تغییر دهید.")
+            return
+        try:
+            project_id = operation()
+            self.site_error_label.hide()
+            self.refresh_sites()
+            index = self.site_selector.findData(project_id)
+            self.site_selector.setCurrentIndex(max(index, 0))
+        except Exception as error:
+            messages = {
+                'Invalid site HTTP URL': 'نشانی معتبر نیست؛ نمونه: https://example.com',
+                'Site name and URL are required': 'نام و نشانی سایت را وارد کنید.',
+                'Site name is required': 'نام سایت را وارد کنید.',
+                'This site is already registered': 'این دامنه قبلاً ثبت شده است؛ آن را از نوار بالا انتخاب کنید.',
+                'The workspace supports at most five sites, including inactive sites': 'حداکثر پنج سایت قابل ثبت است؛ سایت‌های غیرفعال نیز محاسبه می‌شوند.',
+            }
+            message = messages.get(str(error), 'تغییرات ذخیره نشد؛ جزئیات خطا را در گزارش عملیات بررسی کنید.')
+            self.site_error_label.setText(message)
+            self.site_error_label.show()
+            self.log_message(str(error))
+            QMessageBox.warning(self, "تنظیمات سایت", message)
+
+    def register_site(self):
+        from database.sites import SiteRepository
+        name, accepted = QInputDialog.getText(self, "ثبت سایت", "نام سایت:")
+        if accepted:
+            self.change_site(lambda: SiteRepository.register(name, self.url_input.text()))
+
+    def rename_site(self):
+        from database.sites import SiteRepository
+        project_id = self.site_selector.currentData()
+        if project_id is None:
+            return
+        name, accepted = QInputDialog.getText(self, "تغییر نام سایت", "نام سایت:")
+        if accepted:
+            def rename():
+                SiteRepository.configure(project_id, name=name)
+                return project_id
+            self.change_site(rename)
+
+    def toggle_site(self):
+        from database.sites import SiteRepository
+        project_id = self.site_selector.currentData()
+        if project_id is not None:
+            def toggle():
+                SiteRepository.configure(project_id, active=not self._sites[project_id]['is_active'])
+                return project_id
+            self.change_site(toggle)
+
+    def delete_site(self):
+        from database.repository import ProjectRepository
+        project_id = self.site_selector.currentData()
+        if project_id is not None and QMessageBox.question(self, "حذف سایت",
+                "این سایت و همه تاریخچه تحلیل آن حذف شود؟") == QMessageBox.StandardButton.Yes:
+            def delete():
+                ProjectRepository.delete_project(project_id)
+            self.change_site(delete)
+
+    def save_site_settings(self):
+        from database.sites import SiteRepository
+        project_id = self.site_selector.currentData()
+        if project_id is not None:
+            def save():
+                SiteRepository.configure(project_id, settings=self.crawl_settings())
+                return project_id
+            self.change_site(save)
+
+    def stop_analysis(self):
+        if self.worker and self.worker.isRunning():
+            if QMessageBox.question(self, 'توقف تحلیل',
+                    'تحلیل متوقف شود؟ داده‌های ثبت‌شده حفظ می‌شوند؛ نتیجه کامل نخواهد بود.') != QMessageBox.StandardButton.Yes:
+                return
+            self.worker.cancel()
+            self.stop_btn.setEnabled(False)
+            self.log_message("درخواست توقف ثبت شد؛ منتظر پایان عملیات جاری هستیم.")
+
+    def worker_finished(self):
+        self.run_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.site_selector.setEnabled(True)
+        if self.site_selector.currentData() is not None:
+            from database.sites import SiteRepository
+            self.site_status_label.setText(self.site_selector.currentText() + '  ·  ' + self.status_text(SiteRepository.status(self.site_selector.currentData())))
+
+    def closeEvent(self, event):
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, "تحلیل در حال اجراست", "برای بستن برنامه، ابتدا تحلیل را متوقف کنید و منتظر پایان عملیات جاری بمانید.")
+            event.ignore()
+            return
+        event.accept()
+
+    def open_saved_run(self):
+        if self.worker and self.worker.isRunning():
+            return
+        run_id, accepted = QInputDialog.getInt(self, "تاریخچه", "شناسه اجرا:", 1, 1)
+        if not accepted:
+            return
+        try:
+            from database.connection import initialize_database
+            initialize_database()
+            result = self.orchestrator.load_result(run_id)
+            if result is None:
+                raise ValueError("نتیجه ذخیره‌شده‌ای برای این شناسه اجرا وجود ندارد.")
+            self.on_analysis_finished(result)
+        except Exception as error:
+            QMessageBox.warning(self, "تاریخچه", str(error))
+
+    def compare_saved_run(self):
+        current = self.last_result_data.get('meta', {}).get('analysis_run_id')
+        if not current:
+            return
+        run_id, accepted = QInputDialog.getInt(self, "مقایسه اجرا", "شناسه اجرای قبلی:", 1, 1)
+        if not accepted:
+            return
+        try:
+            import json
+            from database.results import AnalysisResultRepository
+            comparison = AnalysisResultRepository.compare(run_id, current)
+            previous = AnalysisResultRepository.load(run_id)
+            self.overview_widget.present(self.last_result_data, previous)
+            self.log_message(json.dumps(comparison, ensure_ascii=False, indent=2))
+            self.switch_tab(4)
+        except Exception as error:
+            QMessageBox.warning(self, "مقایسه", str(error))
 
     def start_analysis(self):
+        if self.worker and self.worker.isRunning():
+            return
         url = self.url_input.text().strip()
         if not url:
-            QMessageBox.warning(self, "Validation Error", "Please enter a valid target URL.")
+            self.navigate('sites')
+            self.url_input.setFocus()
+            QMessageBox.warning(self, "نشانی سایت لازم است", "ابتدا در صفحه وب‌سایت‌ها نشانی سایت را وارد یا سایت ثبت‌شده را انتخاب کنید.")
             return
 
         self.run_btn.setEnabled(False)
         self.export_excel_btn.setEnabled(False)
         self.export_html_btn.setEnabled(False)
         self.log_output.clear()
-        self.progress_bar.setValue(5)
+        self.progress_bar.setRange(0, 0)
+        self.overview_widget.set_state("running", "در حال آماده‌سازی تحلیل؛ نتیجه قبلی متعلق به اجرای پیشین است.")
+        self.navigate("run")
 
-        self.worker = SEOAnalysisWorker(url, {}, self.orchestrator)
+        from modules.serp.google_search import FileSERPProvider
+        try:
+            path = self.serp_path_input.text().strip()
+            self.orchestrator.serp_provider = FileSERPProvider(path) if path else None
+        except (ValueError, OSError) as error:
+            self.on_error(str(error))
+            return
+        options = {**self.crawl_settings(),
+                   "selected_competitors": [domain.strip() for domain in
+                       self.selected_competitors_input.text().split(",") if domain.strip()]}
+        project_id = self.site_selector.currentData()
+        if project_id is not None and url == self._sites[project_id]['website_url']:
+            options['project_id'] = project_id
+        self.worker = SEOAnalysisWorker(url, options, self.orchestrator)
+        self.worker.finished.connect(self.worker_finished)
+        self.stop_btn.setEnabled(True)
+        self.site_selector.setEnabled(False)
+        self.site_status_label.setText("تحلیل در حال اجراست")
         self.worker.progress_updated.connect(self.on_progress_update)
         self.worker.analysis_finished.connect(self.on_analysis_finished)
         self.worker.error_occurred.connect(self.on_error)
         self.worker.start()
 
     def on_progress_update(self, message: str, progress: int):
-        self.progress_bar.setValue(progress)
-        self.log_message(f"[{progress}%] {message}")
+        self.run_message.setText("در حال پردازش؛ جزئیات مرحله در گزارش عملیات ثبت می‌شود.")
+        self.log_message(message)
 
     def on_analysis_finished(self, result_data: Dict[str, Any]):
         self.last_result_data = result_data
+        self.refresh_sites()
+        project_index = self.site_selector.findData(result_data.get('meta', {}).get('project_id'))
+        if project_index >= 0:
+            self.site_selector.setCurrentIndex(project_index)
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
-        self.run_btn.setEnabled(True)
+        self.run_btn.setEnabled(not (self.worker and self.worker.isRunning()))
         self.export_excel_btn.setEnabled(True)
         self.export_html_btn.setEnabled(True)
+
+        for warning in result_data.get("meta", {}).get("warnings", []):
+            self.log_message(warning)
+        self.site_evidence.present(result_data.get('page_details', []))
+        self.keyword_evidence.present(result_data.get('keyword_inventory', []))
+        self.competitor_selection.present(result_data)
+        self.strategy_map.present(result_data)
+        self.overview_widget.present(result_data)
+        status = self.status_text(result_data.get('meta', {}).get('pipeline_status', 'unknown'))
+        self.run_message.setText('نتیجه ذخیره شد · ' + status + '؛ میزان پوشش را در نمای کلی بررسی کنید.')
+        self.site_status_label.setText(self.site_selector.currentText() + '  ·  ' + status)
 
         # به‌روزرسانی جدول ممیزی فنی
         audit = result_data.get("audit_summary", {})
@@ -223,35 +330,46 @@ class MainWindow(QMainWindow):
             self.competitors_table.setItem(row, 0, QTableWidgetItem(str(comp.get("domain", ""))))
             self.competitors_table.setItem(row, 1, QTableWidgetItem(str(comp.get("competitiveness_score", ""))))
             self.competitors_table.setItem(row, 2, QTableWidgetItem(str(comp.get("keywords_count", ""))))
-            self.competitors_table.setItem(row, 3, QTableWidgetItem("بررسی شکاف محتوایی و تولید مقاله تخصصی"))
+            self.competitors_table.setItem(row, 3, QTableWidgetItem(result_data.get("content_gap_analysis", {}).get("status", "unavailable")))
 
-        QMessageBox.information(self, "Success", "Full SEO Intelligence pipeline completed successfully!")
+        self.statusBar().showMessage('نتیجه ذخیره شد · ' + status, 8000)
+        self.navigate('overview')
+
+    @staticmethod
+    def status_text(status):
+        from modules.ui.design_system import STATUS_TEXT
+        state = status.get('state', 'unknown') if isinstance(status, dict) else status
+        return STATUS_TEXT.get(state, str(state))
 
     def on_error(self, error_msg: str):
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.overview_widget.set_state("error", "تحلیل ناموفق بود؛ پیام خطا و تنظیمات اتصال را بررسی کنید. اعداد موجود متعلق به نتیجه قبلی‌اند.")
+        self.run_message.setText("خطا در تحلیل: " + error_msg)
+        self.site_status_label.setText("خطا در اجرای تحلیل")
         self.log_message(f"ERROR: {error_msg}")
-        self.run_btn.setEnabled(True)
-        QMessageBox.critical(self, "Execution Error", f"An error occurred:\n{error_msg}")
+        self.run_btn.setEnabled(not (self.worker and self.worker.isRunning()))
+        QMessageBox.critical(self, "خطای اجرا", f"تحلیل انجام نشد. جزئیات خطا:\n{error_msg}")
 
     def export_excel(self):
         if not self.last_result_data:
             return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Excel Report", "seo_audit_report.xlsx", "Excel Files (*.xlsx)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره گزارش Excel", "seo_audit_report.xlsx", "Excel Files (*.xlsx)")
         if file_path:
             try:
                 reporter = ExcelReportGenerator()
                 saved_path = reporter.generate_report(file_path, self.last_result_data)
-                QMessageBox.information(self, "Exported", f"Excel report saved to:\n{saved_path}")
+                QMessageBox.information(self, "گزارش ذخیره شد", f"مسیر گزارش Excel:\n{saved_path}")
             except Exception as e:
-                QMessageBox.critical(self, "Export Error", str(e))
+                QMessageBox.critical(self, "خطای ساخت گزارش", str(e))
 
     def export_html(self):
         if not self.last_result_data:
             return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save HTML Dashboard", "seo_dashboard.html", "HTML Files (*.html)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره گزارش HTML", "seo_dashboard.html", "HTML Files (*.html)")
         if file_path:
             try:
                 saved_path = HTMLReportGenerator.generate_report(file_path, self.last_result_data)
-                QMessageBox.information(self, "Exported", f"HTML dashboard saved to:\n{saved_path}")
+                QMessageBox.information(self, "گزارش ذخیره شد", f"مسیر گزارش HTML:\n{saved_path}")
             except Exception as e:
-                QMessageBox.critical(self, "Export Error", str(e))
+                QMessageBox.critical(self, "خطای ساخت گزارش", str(e))

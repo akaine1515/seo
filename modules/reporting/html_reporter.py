@@ -1,4 +1,6 @@
 import os
+from html import escape
+from urllib.parse import urlparse
 from datetime import datetime
 from typing import Dict, Any
 
@@ -21,6 +23,18 @@ class HTMLReportGenerator:
         if not isinstance(project_data, dict):
             raise TypeError("project_data must be a dictionary.")
 
+        def safe_data(value, key=None):
+            if isinstance(value, dict):
+                return {escape(str(k), quote=True): safe_data(v, k) for k, v in value.items()}
+            if isinstance(value, list):
+                return [safe_data(v) for v in value]
+            if isinstance(value, str):
+                if key == "url" and urlparse(value).scheme not in ("http", "https"):
+                    return "#"
+                return escape(value, quote=True)
+            return value
+
+        project_data = safe_data(project_data)
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
         meta = project_data.get("meta", {})
@@ -89,6 +103,47 @@ class HTMLReportGenerator:
             </tr>
             """
 
+        availability_html = ("Analysis: " + str(meta.get('pipeline_status', 'unknown'))
+                             + " | Crawl: " + str(meta.get('crawl_status', 'unknown'))
+                             + "<br>Observed coverage: " + str(meta.get('coverage', {}))
+                             + "<br>" + "<br>".join(meta.get("warnings", [])))
+        availability_html += "<br>Competitors: " + str(project_data.get("competitor_status", "unknown"))
+        availability_html += " | Content gaps: " + str(gap_analysis.get("status", "unknown"))
+        empty_gap_message = ("No content gaps detected in analyzed evidence."
+                             if gap_analysis.get("status") == "completed" else
+                             "Content gap analysis unavailable or incomplete; this is not evidence of no gaps.")
+        def data_table(title, rows, table_id):
+            if not rows:
+                return ""
+            columns = list(dict.fromkeys(key for row in rows for key in row))
+            cells = "".join("<tr>" + "".join("<td>" + str(row.get(key, "")) + "</td>" for key in columns) + "</tr>" for row in rows)
+            heads = "".join("<th>" + key + "</th>" for key in columns)
+            return (f'<div class="section-card"><h2>{title}</h2>'
+                    f'<input id="{table_id}Search" class="search-box" placeholder="Search..." oninput="filterTable(\'{table_id}\', \'{table_id}Search\')">'
+                    f'<table id="{table_id}"><thead><tr>{heads}</tr></thead><tbody>{cells}</tbody></table></div>')
+
+        roadmap_html = data_table("SEO Roadmap (heuristic priorities)", project_data.get('seo_roadmap', []), 'roadmapTable')
+        keywords_html = data_table("Keywords", project_data.get('keyword_analysis', {}).get('keywords', []), 'keywordsTable')
+        extended_html = ''
+        for title, key in [('جزئیات سئوی صفحات، تگ‌ها، تصاویر و دریافت HTTP', 'page_details'),
+                           ('کلمات استفاده‌شده و عبارت‌های فرزند', 'keyword_inventory'),
+                           ('استراتژی و شواهد هر کلمه', 'keyword_strategies')]:
+            extended_html += data_table(title, project_data.get(key, []), key)
+        def branch(node):
+            url = node.get('url')
+            text = node.get('label', '')
+            if url and url != '#':
+                text += f' <a href="{url}" target="_blank" rel="noopener noreferrer">صفحه منبع</a>'
+            children = node.get('children', [])
+            return ('<li><details open><summary>' + text + '</summary><ul>' + ''.join(branch(c) for c in children) + '</ul></details></li>') if children else '<li>' + text + '</li>'
+        maps = project_data.get('keyword_mindmaps', [])
+        if maps:
+            extended_html += '<div class="section-card" dir="rtl"><h2>مایندمپ کلمات کلیدی</h2><p>شاخه‌ها باز و بسته می‌شوند؛ روابط فرزند از عبارت‌های مشاهده‌شده‌اند.</p><ul>' + ''.join(branch(m) for m in maps) + '</ul></div>'
+        if project_data.get('analysis_limitations'):
+            extended_html = '<div class="section-card" dir="rtl"><h2>محدوده و محدودیت‌های تحلیل</h2>' + '<br>'.join(project_data['analysis_limitations']) + '</div>' + extended_html
+        source_info = project_data.get('serp', {})
+        provenance_html = (f"Run ID: {meta.get('analysis_run_id', '')} | SERP source: {source_info.get('source', '')} | "
+                           f"Source timestamp: {source_info.get('retrieved_at', '')}")
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -184,6 +239,9 @@ class HTMLReportGenerator:
             margin-top: 15px;
             font-size: 14px;
         }}
+        td {{ overflow-wrap: anywhere; }}
+        details {{ margin: 8px 0; }}
+        summary {{ cursor: pointer; }}
         th, td {{
             padding: 12px 15px;
             text-align: left;
@@ -242,6 +300,7 @@ class HTMLReportGenerator:
             </div>
         </header>
 
+        <div class="section-card"><h2>Analysis availability</h2><p>{availability_html}</p></div>
         <div class="kpi-grid">
             <div class="kpi-card">
                 <h3>Total Pages Audited</h3>
@@ -263,7 +322,7 @@ class HTMLReportGenerator:
 
         <div class="section-card">
             <h2>Technical & On-Page SEO Issues</h2>
-            <input type="text" id="issueSearch" class="search-box" placeholder="Search issues..." onkeyup="filterTable('issuesTable', 'issueSearch')">
+            <input type="text" id="issueSearch" class="search-box" placeholder="Search issues..." oninput="filterTable('issuesTable', 'issueSearch')">
             <table id="issuesTable">
                 <thead>
                     <tr>
@@ -313,11 +372,15 @@ class HTMLReportGenerator:
                     </tr>
                 </thead>
                 <tbody>
-                    {gaps_rows_html if gaps_rows_html else '<tr><td colspan="5" style="text-align:center;">No content gaps detected.</td></tr>'}
+                    {gaps_rows_html if gaps_rows_html else '<tr><td colspan="5" style="text-align:center;">' + empty_gap_message + '</td></tr>'}
                 </tbody>
             </table>
         </div>
 
+        {roadmap_html}
+        {keywords_html}
+        {extended_html}
+        <div class="section-card"><h2>Data provenance</h2><p>{provenance_html}</p></div>
         <footer>
             <p>Generated by SEO Intelligence V2 (Non-AI Algorithmic SEO Engine) • Desktop Application for Windows</p>
         </footer>

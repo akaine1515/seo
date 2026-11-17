@@ -84,7 +84,7 @@ class KeywordAnalyzer:
         # 2. محاسبه TF-IDF برای هر صفحه
         tf_idf_results = {}
 
-        for page_id, page_data in extracted_pages_data.values():
+        for page_id, page_data in extracted_pages_data.items():
             page_tf_idf = {}
             total_tokens = page_data.get("total_tokens", 1) or 1
             

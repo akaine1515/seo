@@ -104,7 +104,8 @@ class TestReportingEngine(unittest.TestCase):
                     "Cannibalization",
                     "Competitors",
                     "Content Gaps",
-                    "Keyword Overlaps"
+                    "Keyword Overlaps",
+                    "Run Metadata"
                 ]
                 self.assertEqual(excel_file.sheet_names, expected_sheets)
 
@@ -115,6 +116,8 @@ class TestReportingEngine(unittest.TestCase):
             df_audit = pd.read_excel(generated_path, sheet_name="Technical Audit")
             self.assertEqual(len(df_audit), 2)
             self.assertEqual(df_audit.iloc[0]["Rule ID"], "HTTP_ERROR_STATUS")
+            metadata = pd.read_excel(generated_path, sheet_name="Run Metadata")
+            self.assertEqual(metadata.iloc[0]['target_domain'], self.sample_project_data['meta']['target_domain'])
 
     def test_html_report_generation(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

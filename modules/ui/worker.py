@@ -1,5 +1,6 @@
 from PySide6.QtCore import QThread, Signal
 from typing import Dict, Any
+import threading
 
 
 class SEOAnalysisWorker(QThread):
@@ -13,9 +14,13 @@ class SEOAnalysisWorker(QThread):
 
     def __init__(self, target_url: str, options: Dict[str, Any], engine_orchestrator: Any):
         super().__init__()
+        self.cancel_event = threading.Event()
         self.target_url = target_url
         self.options = options
         self.engine_orchestrator = engine_orchestrator
+
+    def cancel(self):
+        self.cancel_event.set()
 
     def run(self):
         try:
@@ -26,9 +31,9 @@ class SEOAnalysisWorker(QThread):
                 self.progress_updated.emit(msg, val)
 
             # اجرای فرآیند تحلیلی با استفاده از کالبک ایمن
-            result_data = self.engine_orchestrator.run_full_pipeline(self.target_url, self.options, callback_wrapper)
+            result_data = self.engine_orchestrator.run_full_pipeline(self.target_url, self.options, callback_wrapper, cancel_event=self.cancel_event)
             
-            self.progress_updated.emit("Pipeline completed successfully. Preparing reports...", 90)
+            self.progress_updated.emit("Results saved with coverage and stage status.", 100)
             self.analysis_finished.emit(result_data)
 
         except Exception as e:

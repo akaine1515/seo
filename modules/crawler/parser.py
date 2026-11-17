@@ -1,5 +1,7 @@
 
 import hashlib
+import json
+from collections import Counter
 import re
 import trafilatura
 
@@ -522,12 +524,45 @@ class PageParser:
             url
         )
 
+        headings = [{'level': int(t.name[1]), 'text': t.get_text(' ', strip=True)}
+                    for t in soup.find_all(re.compile(r'^h[1-6]$'))]
+        image_details = [{'url': PageParser.normalize_link_url(urljoin(url, t.get('src', ''))) if t.get('src') else None,
+                          'alt': t.get('alt'), 'width': t.get('width'), 'height': t.get('height'),
+                          'loading': t.get('loading'), 'srcset': t.get('srcset'),
+                          'dimensions_source': 'HTML attributes, not measured pixels',
+                          'file_bytes': None} for t in images]
+        structured = []
+        for tag in soup.find_all('script', attrs={'type': 'application/ld+json'}):
+            try:
+                data = json.loads(tag.string or tag.get_text())
+                structured.append({'valid_json': True, 'data': data})
+            except (ValueError, TypeError):
+                structured.append({'valid_json': False, 'data': None})
+
         # -----------------------------------------
         # FINAL RESULT
         # -----------------------------------------
 
         return {
 
+            "mixed_content_urls": sorted({urljoin(url, tag.get(attr))
+                for tag, attr in [(t, a) for a in ('src', 'href') for t in soup.find_all(attrs={a: True})]
+                if url.startswith('https://') and tag.name in ('img', 'script', 'link', 'iframe', 'video', 'audio')
+                and (tag.name != 'link' or set(tag.get('rel', [])).intersection({'stylesheet', 'icon', 'preload', 'modulepreload'}))
+                and urljoin(url, tag.get(attr)).startswith('http://')}),
+
+            'headings': headings,
+            'h4_list': PageParser.get_headings(soup, 'h4'),
+            'h5_list': PageParser.get_headings(soup, 'h5'),
+            'h6_list': PageParser.get_headings(soup, 'h6'),
+            'tag_counts': dict(Counter(t.name for t in soup.find_all(True))),
+            'meta_tags': [dict(t.attrs) for t in soup.find_all('meta')],
+            'language': soup.html.get('lang') if soup.html else None,
+            'viewport': PageParser.get_meta_content(soup, 'viewport'),
+            'images': image_details,
+            'structured_data': structured,
+            'resource_counts': {'scripts': len(soup.find_all('script', src=True)),
+                                'stylesheets': len(soup.select('link[rel~=stylesheet]'))},
             # Basic information
             "url": url,
             "status_code": status_code,

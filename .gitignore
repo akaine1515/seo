@@ -5,3 +5,10 @@ __pycache__/
 data/*.db
 logs/*
 reports/*
+
+data/*.db-*
+*.sqlite
+*.sqlite3
+.cache/
+exports/*.xlsx
+exports/*.html

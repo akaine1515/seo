@@ -115,7 +115,8 @@ class FakeRobotsManager:
         self,
         base_url,
         user_agent=None,
-        blocked_urls=None
+        blocked_urls=None,
+        request_policy=None
     ):
 
         self.base_url = base_url

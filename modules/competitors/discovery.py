@@ -1,3 +1,4 @@
+from core.domains import site_domain
 from urllib.parse import urlparse
 import ipaddress
 from typing import Dict, List, Any, Optional
@@ -72,7 +73,17 @@ class CompetitorDiscovery:
             if not hostname:
                 return False
 
-            hostname_lower = hostname.lower()
+            if parsed.username or parsed.password:
+                return False
+            _ = parsed.port  # Reject malformed and out-of-range ports.
+            hostname_lower = hostname.lower().rstrip(".")
+            labels = hostname_lower.split(".")
+            if len(labels) < 2 or any(
+                not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+                or not all(c.isalnum() or c == "-" for c in label)
+                for label in labels
+            ):
+                return False
 
             # جلوگیری از پذیرش آدرس‌های لوکال‌هست
             if hostname_lower in ("localhost", "127.0.0.1", "::1") or hostname_lower.endswith(".local"):
@@ -118,19 +129,8 @@ class CompetitorDiscovery:
             if hostname.startswith("www."):
                 hostname = hostname[4:]
 
-            parts = hostname.split(".")
-            # بررسی پسوندهای عمومی ناپیوسته (مثل co.uk به تنهایی)
-            if len(parts) == 2 and f"{parts[0]}.{parts[1]}" in cls.MULTI_PART_TLDS:
-                return None  # پسوند خالص است، دامنه ثبت‌پذیر نیست
+            return site_domain(cleaned) or None
 
-            if len(parts) > 2:
-                last_two = f"{parts[-2]}.{parts[-1]}"
-                if last_two in cls.MULTI_PART_TLDS and len(parts) > 3:
-                    return f"{parts[-3]}.{last_two}"
-                elif last_two not in cls.MULTI_PART_TLDS:
-                    return f"{parts[-2]}.{parts[-1]}"
-
-            return hostname
         except Exception:
             return None
 
