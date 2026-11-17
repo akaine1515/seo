@@ -115,7 +115,8 @@ class KeywordPlanTests(unittest.TestCase):
         project = ProjectRepository.create_project('old', 'https://example.com', 'example.com')
         with database_connection() as conn:
             conn.execute('DROP TABLE keyword_competitor_choices')
-            conn.execute('DELETE FROM schema_versions WHERE version=9')
+            conn.execute('DROP TABLE analysis_stage_results')
+            conn.execute('DELETE FROM schema_versions WHERE version>=9')
         initialize_database()
         CompetitorChoiceRepository.save(project, {'alpha': []}, {'alpha': []})
         self.assertIsNotNone(ProjectRepository.get_project(project))

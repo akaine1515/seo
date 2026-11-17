@@ -12,7 +12,7 @@ from contextlib import contextmanager
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = PROJECT_ROOT / "data" / "seo_intelligence.db"
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 DATABASE_TIMEOUT = 15
 BUSY_TIMEOUT_MS = 15000
@@ -740,6 +740,21 @@ def _initialize_once():
             PRIMARY KEY(project_id, keyword)
         )""")
         register_schema_version(connection, 9)
+        connection.execute("""CREATE TABLE IF NOT EXISTS analysis_stage_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_analysis_run_id INTEGER NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
+            stage_name TEXT NOT NULL CHECK(stage_name = 'competitors'),
+            status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'partial', 'failed', 'cancelled')),
+            format_version INTEGER NOT NULL DEFAULT 1 CHECK(format_version = 1),
+            algorithm_version TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            result_json TEXT,
+            error_type TEXT
+        )""")
+        connection.execute('CREATE INDEX IF NOT EXISTS idx_stage_source '
+                           'ON analysis_stage_results(source_analysis_run_id, id)')
+        register_schema_version(connection, 10)
 
         latest_version = connection.execute(
             "SELECT MAX(version) FROM schema_versions"

@@ -68,7 +68,7 @@ class CompetitorSelection(QWidget):
         self.project_id = None
         body = QVBoxLayout(self)
         body.addWidget(label('رقبای هر کلمه کلیدی', 'title'))
-        body.addWidget(label('۱. فایل SERP تاریخ‌دار وارد کنید. ۲. کلمه را انتخاب کنید. ۳. از صفر تا پنج دامنه را ذخیره کنید. ۴. تحلیل را مجدد اجرا کنید؛ تاریخچه قبلی حفظ می‌شود.', 'muted'))
+        body.addWidget(label('۱. نتیجه خزش سایت را باز کنید. ۲. SERP تاریخ‌دار وارد یا از نتایج همان اجرا استفاده کنید. ۳. برای هر کلمه صفر تا پنج رقیب ذخیره کنید. ۴. فقط مرحله رقبا را اجرا کنید؛ سایت شما دوباره خزش نمی‌شود.', 'muted'))
         import_button = QPushButton('انتخاب فایل نتایج SERP')
         import_button.clicked.connect(self.import_serp)
         body.addWidget(import_button)
@@ -85,6 +85,10 @@ class CompetitorSelection(QWidget):
         save = QPushButton('ذخیره انتخاب این کلمه')
         save.clicked.connect(self.save)
         body.addWidget(save)
+        self.run_stage_btn = QPushButton('بررسی رقبا با خزش ذخیره‌شده')
+        self.run_stage_btn.clicked.connect(self.run_stage)
+        body.addWidget(self.run_stage_btn)
+        body.addWidget(label('انتخاب‌های نمایش‌داده‌شده تنظیمات فعلی سایت هستند؛ نتایج هر بررسی در تاریخچه مستقل حفظ می‌شوند.', 'muted'))
 
     def present(self, result):
         from database.competitors import CompetitorChoiceRepository
@@ -140,21 +144,28 @@ class CompetitorSelection(QWidget):
     def save(self):
         if self.window.worker and self.window.worker.isRunning():
             QMessageBox.information(self, 'تحلیل در حال اجراست', 'پس از پایان تحلیل، انتخاب رقبا را تغییر دهید.')
-            return
+            return False
         if self.project_id != self.window.site_selector.currentData():
             QMessageBox.warning(self, 'سایت فعال تغییر کرده', 'نتایج مربوط به سایت فعال را بارگذاری کنید.')
-            return
+            return False
         if not getattr(self, 'project_id', None) or not self.term.currentText():
             QMessageBox.warning(self, 'انتخاب سایت', 'ابتدا سایت را ثبت و نتایج SERP را بارگذاری کنید.')
-            return
+            return False
         from database.competitors import CompetitorChoiceRepository
         term = self.term.currentText()
         try:
             CompetitorChoiceRepository.save(self.project_id, {term: self.selected()}, self.candidates)
             self.choices[term] = self.selected()
-            self.counter.setText('انتخاب این کلمه ذخیره شد؛ برای مقایسه، تحلیل را اجرا کنید.')
+            self.counter.setText('انتخاب ذخیره شد؛ برای مقایسه، مرحله رقبا را اجرا کنید.')
+            return True
         except Exception as error:
             QMessageBox.warning(self, 'ذخیره رقبا', str(error))
+            return False
+
+    def run_stage(self):
+        if self.term.currentText() and not self.save():
+            return
+        self.window.start_competitor_stage()
 
 
 class StrategyMap(QWidget):

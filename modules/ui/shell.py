@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout,
     QProgressBar, QTabWidget, QTableWidget, QHeaderView, QTextEdit, QScrollArea,
     QAbstractItemView)
 from modules.ui.overview import Overview, label, panel
-from modules.ui.design_system import CREDIT
+from modules.ui.design_system import CREDIT, GlassBackdrop
 
 
 def scroll(widget):
@@ -47,7 +47,7 @@ def table_page(title, description, columns):
 
 
 def build_shell(w):
-    central = QWidget()
+    central = GlassBackdrop()
     central.setObjectName('shell')
     central.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
     w.setCentralWidget(central)
@@ -78,6 +78,9 @@ def build_shell(w):
     main.addWidget(top)
     w.site_status_label = label('سایتی انتخاب نشده است', 'muted')
     main.addWidget(w.site_status_label)
+    w.stage_banner = label('', 'muted')
+    w.stage_banner.hide()
+    main.addWidget(w.stage_banner)
     w.tabs = QTabWidget()
     w.tabs.tabBar().hide()
     main.addWidget(w.tabs, 1)
@@ -187,6 +190,7 @@ def build_shell(w):
     w.compare_btn = button('مقایسه با اجرای قبلی', w.compare_saved_run)
     body.addWidget(w.history_btn)
     body.addWidget(w.compare_btn)
+    body.addWidget(button('تاریخچه بررسی‌های مستقل رقبا', w.open_competitor_history))
     body.addStretch()
     w.page_indices['history'] = w.tabs.addTab(widget, 'تاریخچه اجراها')
     widget, body = page('تنظیمات', 'رابط فارسی و راست‌چین؛ اتصال‌های بیرونی تنها با داده واقعی.')
@@ -261,7 +265,9 @@ def build_shell(w):
         nav_body.addWidget(control)
         w.nav_buttons.append(control)
     nav_body.addStretch()
-    side.addWidget(scroll(nav), 1)
+    nav_area = scroll(nav)
+    nav_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    side.addWidget(nav_area, 1)
     w.credit_label = label(CREDIT)
     w.credit_label.setObjectName('credit')
     w.credit_label.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
