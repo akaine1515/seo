@@ -32,29 +32,37 @@ class KeywordClustering:
             reverse=True
         )
 
+        # Token and character-trigram postings avoid a full corpus scan for
+        # every primary term. Verify substrings to retain the original contract.
+        from collections import defaultdict
+        token_index, gram_index = defaultdict(set), defaultdict(set)
+        for index, (phrase, _) in enumerate(sorted_keywords):
+            for token in set(phrase.split()):
+                token_index[token].add(index)
+            for gram in {phrase[i:i+3] for i in range(len(phrase)-2)}:
+                gram_index[gram].add(index)
         clusters = []
         assigned_keywords = set()
-
         for kw, metrics in sorted_keywords:
             if kw in assigned_keywords:
                 continue
-
-            # ایجاد یک خوشه جدید با این کلمه به عنوان هسته اصلی (Primary Keyword)
             current_cluster_members = [kw]
             assigned_keywords.add(kw)
-
             kw_tokens = set(kw.split())
-
-            # جستجو برای یافتن کلمات مرتبط دیگر که کلمات مشترک دارند
-            for other_kw, other_metrics in sorted_keywords:
+            candidates = set()
+            for token in kw_tokens:
+                candidates.update(token_index[token])
+                if len(token) > 2:
+                    postings = [gram_index[token[i:i+3]] for i in range(len(token)-2)]
+                    shortest, *rest = sorted(postings, key=len)
+                    candidates.update(shortest.intersection(*rest))
+            # Original score/frequency order determines membership and summation.
+            for index in sorted(candidates):
+                other_kw, _ = sorted_keywords[index]
                 if other_kw in assigned_keywords:
                     continue
-
-                other_tokens = set(other_kw.split())
-                
-                # بررسی اشتراک توکن‌ها یا ریشه‌ها
-                intersection = kw_tokens.intersection(other_tokens)
-                if intersection or any(token in other_kw for token in kw_tokens if len(token) > 2):
+                if (kw_tokens.intersection(other_kw.split()) or
+                        any(token in other_kw for token in kw_tokens if len(token) > 2)):
                     current_cluster_members.append(other_kw)
                     assigned_keywords.add(other_kw)
 

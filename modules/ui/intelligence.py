@@ -1,6 +1,6 @@
 """Native searchable evidence tables and per-keyword strategy trees."""
 import json
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QTableWidget,
     QTableWidgetItem, QAbstractItemView, QHeaderView, QPlainTextEdit, QComboBox, QListWidget,
     QListWidgetItem, QPushButton, QFileDialog, QMessageBox, QTreeWidget, QTreeWidgetItem)
@@ -8,56 +8,176 @@ from modules.ui.overview import label
 
 
 class EvidenceTable(QWidget):
-    def __init__(self, title, description, columns):
+    """Cached search, global sort and bounded native table rendering."""
+    PAGE_SIZE = 100
+
+    def __init__(self, title, description, columns, filter_key=None):
         super().__init__()
-        self.columns, self.rows = columns, []
+        self.columns, self.rows, self.matches = columns, [], []
+        self.page_number, self.sort_column, self.descending = 0, None, False
+        self.filter_key = filter_key
         body = QVBoxLayout(self)
         body.addWidget(label(title, 'title'))
-        body.addWidget(label(description, 'muted'))
+        self.notice = label(description, 'muted')
+        body.addWidget(self.notice)
+        from modules.ui.charts import BarChart
+        self.chart = BarChart('')
+        self.chart.hide()
+        body.addWidget(self.chart)
+        filters = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText('جست‌وجو در داده‌ها…')
-        self.search.textChanged.connect(self.filter_rows)
-        body.addWidget(self.search)
+        self.search.setPlaceholderText('جست‌وجو در تمام نتایج…')
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(150)
+        self.search_timer.timeout.connect(lambda: self.filter_rows(self.search.text()))
+        self.search.textChanged.connect(lambda: self.search_timer.start())
+        filters.addWidget(self.search, 1)
+        self.kind = QComboBox()
+        self.kind.addItem('همه', None)
+        self.kind.currentIndexChanged.connect(lambda: self.filter_rows(self.search.text()))
+        self.kind.setVisible(bool(filter_key))
+        filters.addWidget(self.kind)
+        body.addLayout(filters)
         self.table = QTableWidget(0, len(columns))
         self.table.setHorizontalHeaderLabels([title for key, title in columns])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().sectionClicked.connect(self.sort_by)
         self.table.itemSelectionChanged.connect(self.details)
-        self.table.setSortingEnabled(True)
         self.detail = QPlainTextEdit()
         self.detail.setReadOnly(True)
-        self.detail.setPlaceholderText('یک ردیف را برای مشاهده منشأ، شواهد و جزئیات انتخاب کنید.')
-        self.detail.setMaximumHeight(220)
+        option = self.detail.document().defaultTextOption()
+        option.setTextDirection(Qt.LayoutDirection.RightToLeft)
+        option.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignAbsolute)
+        self.detail.document().setDefaultTextOption(option)
+        self.detail.setPlaceholderText('یک ردیف را برای مشاهده منشأ، شواهد و اقدام بعدی انتخاب کنید.')
+        self.detail.setMaximumHeight(150)
         body.addWidget(self.table, 1)
+        paging = QHBoxLayout()
+        self.previous = QPushButton('صفحه قبل')
+        self.following = QPushButton('صفحه بعد')
+        self.previous.clicked.connect(lambda: self.move_page(-1))
+        self.following.clicked.connect(lambda: self.move_page(1))
+        self.count = label('')
+        for widget in (self.previous, self.count, self.following):
+            paging.addWidget(widget)
+        body.addLayout(paging)
         body.addWidget(self.detail)
         self.empty = label('داده‌ای بارگذاری نشده است؛ تحلیل را اجرا یا نتیجه ذخیره‌شده را باز کنید.', 'muted')
         body.addWidget(self.empty)
+        self.present([])
+
+    @staticmethod
+    def display(value):
+        if value is None:
+            return '—'
+        if isinstance(value, float):
+            return format(value, '.6g')
+        return json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value)
+
+    @staticmethod
+    def normalize(text):
+        return ' '.join(text.casefold().replace('ك', 'ک').replace('ي', 'ی').replace('ى', 'ی').split())
 
     def present(self, rows):
-        self.rows = rows
+        self.search_timer.stop()
+        self.rows = list(rows)
+        self._texts = [self.normalize(' '.join(self.display(row.get(key)) for key, _ in self.columns)) for row in self.rows]
+        self.search.blockSignals(True)
         self.search.clear()
-        self.detail.clear()
-        self.table.setSortingEnabled(False)
-        self.table.setRowCount(len(rows))
-        for i, row in enumerate(rows):
-            for j, (key, title) in enumerate(self.columns):
-                value = row.get(key)
-                text = json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value) if value is not None else '—'
-                item = QTableWidgetItem(text)
-                item.setData(Qt.ItemDataRole.UserRole, row)
-                self.table.setItem(i, j, item)
-        self.table.setSortingEnabled(True)
-        self.empty.setVisible(not rows)
+        self.search.blockSignals(False)
+        self.kind.blockSignals(True)
+        self.kind.clear()
+        self.kind.addItem('همه', None)
+        if self.filter_key:
+            for value in sorted({str(row[self.filter_key]) for row in self.rows if row.get(self.filter_key) is not None}):
+                self.kind.addItem(value, value)
+        self.kind.blockSignals(False)
+        self.filter_rows('')
 
     def filter_rows(self, text):
-        for i in range(self.table.rowCount()):
-            self.table.setRowHidden(i, not any(text.casefold() in self.table.item(i, j).text().casefold() for j in range(self.table.columnCount())))
+        self.search_timer.stop()
+        query, kind = self.normalize(text), self.kind.currentData()
+        self.matches = [i for i, row in enumerate(self.rows) if query in self._texts[i]
+                        and (kind is None or str(row.get(self.filter_key)) == kind)]
+        self.page_number = 0
+        self.apply_sort()
+
+    def sort_by(self, column):
+        self.descending = not self.descending if self.sort_column == column else False
+        self.sort_column = column
+        self.page_number = 0
+        self.apply_sort()
+
+    def apply_sort(self):
+        if self.sort_column is not None:
+            key = self.columns[self.sort_column][0]
+            def order(index):
+                value = self.rows[index].get(key)
+                if value is None:
+                    return (2, '')
+                if isinstance(value, (int, float)):
+                    return (0, value)
+                return (1, self.normalize(self.display(value)))
+            self.matches.sort(key=order, reverse=self.descending)
+            self.table.horizontalHeader().setSortIndicatorShown(True)
+            self.table.horizontalHeader().setSortIndicator(self.sort_column,
+                Qt.SortOrder.DescendingOrder if self.descending else Qt.SortOrder.AscendingOrder)
+        self.render_page()
+
+    def move_page(self, delta):
+        self.page_number = max(0, min(self.page_number + delta, max(0, (len(self.matches)-1)//self.PAGE_SIZE)))
+        self.render_page()
+
+    def render_page(self):
+        start = self.page_number * self.PAGE_SIZE
+        indices = self.matches[start:start+self.PAGE_SIZE]
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
+        try:
+            self.detail.clear()
+            self.table.clearSelection()
+            self.table.setRowCount(len(indices))
+            for i, index in enumerate(indices):
+                row = self.rows[index]
+                for j, (key, _) in enumerate(self.columns):
+                    # Long lists/objects live in details; paint at most 100 rows.
+                    text = self.display(row.get(key))
+                    item = QTableWidgetItem(text[:350] + ('…' if len(text) > 350 else ''))
+                    item.setData(Qt.ItemDataRole.UserRole, index)
+                    self.table.setItem(i, j, item)
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
+        self.previous.setEnabled(start > 0)
+        self.following.setEnabled(start + self.PAGE_SIZE < len(self.matches))
+        self.count.setText(f'{start+1 if indices else 0}–{start+len(indices)} از {len(self.matches)} · کل {len(self.rows)}')
+        self.empty.setVisible(not indices)
+        self.empty.setText('نتیجه‌ای با این فیلتر پیدا نشد.' if self.rows else 'داده‌ای موجود نیست؛ تحلیل را اجرا یا نتیجه ذخیره‌شده همین سایت را باز کنید.')
 
     def details(self):
         items = self.table.selectedItems()
         if items:
-            self.detail.setPlainText(json.dumps(items[0].data(Qt.ItemDataRole.UserRole), ensure_ascii=False, indent=2))
+            row = self.rows[items[0].data(Qt.ItemDataRole.UserRole)]
+            names = dict(self.columns)
+            names.update(evidence='شواهد', recommendation='اقدام پیشنهادی', source_pages='صفحات منبع',
+                score_method='روش امتیازدهی', limitation='محدودیت', evidence_urls='نشانی شواهد',
+                source='منبع', retrieved_at='تاریخ منبع', algorithm_version='نسخه الگوریتم',
+                analysis_run_id='شناسه اجرا', action='اقدام بعدی', total_frequency='مجموع فراوانی',
+                intent='نیت احتمالی', total_score='مجموع وزن داخلی', impact='اثر فرضی', effort='تلاش فرضی',
+                depends_on='وابستگی‌ها', horizon='بازه پیشنهادی')
+            priority = ['term', 'keyword', 'title', 'url', 'recommendation', 'action',
+                        'score_method', 'source_pages', 'evidence_urls', 'evidence']
+            keys = list(dict.fromkeys([*(k for k in priority if k in row), *row]))
+            self.detail.setPlainText('\n\n'.join(names.get(k, k) + ': ' + self.display(row[k]) for k in keys))
+
+    def show_chart(self, title, values, unit='تعداد'):
+        self.chart.title, self.chart.unit = title, unit
+        self.chart.present(values)
+        self.chart.show()
 
 
 class CompetitorSelection(QWidget):

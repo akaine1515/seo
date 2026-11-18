@@ -42,7 +42,8 @@ class UIDesignTests(unittest.TestCase):
         self.assertGreater(sidebar_x, content_x + w.tabs.width())
         self.assertEqual(w.credit_label.text(), CREDIT)
         self.assertEqual(w.about_credit.text(), CREDIT)
-        self.assertEqual(len(w.nav_buttons), 19)
+        self.assertEqual(len(w.nav_buttons), 20)
+        self.assertIn('research', w.page_indices)
         w.navigate('about')
         self.assertTrue(w.about_credit.isVisible())
         self.assertIn('درباره محصول', w.breadcrumb.text())
@@ -53,6 +54,25 @@ class UIDesignTests(unittest.TestCase):
         self.assertTrue(w.credit_label.isVisible())
         w.nav_buttons[0].click()
         self.assertEqual(w.tabs.currentIndex(), w.page_indices['overview'])
+
+    def test_navigation_icons_metric_colors_and_compact_accessibility(self):
+        w = self.window
+        self.assertTrue(all(not button.icon().isNull() for button in w.nav_buttons))
+        self.assertTrue(all(button.accessibleName() == button.property('full_text') for button in w.nav_buttons))
+        self.assertTrue(all(group.isVisible() for group in w.nav_groups))
+        values = [metric.value_label.styleSheet() for metric, _ in w.overview_widget.metrics.values()]
+        self.assertEqual(len(set(values)), 4)
+        for button, _ in w.overview_widget.metrics.values():
+            self.assertEqual(button.value_label.text(), '—')
+        w.toggle_sidebar()
+        self.assertTrue(all(not group.isVisible() for group in w.nav_groups))
+        self.assertEqual(w.credit_label.text(), CREDIT)
+        self.assertTrue(all(not button.text() and not button.icon().isNull() for button in w.nav_buttons))
+        self.assertFalse(w.credit_label.wordWrap())
+        self.assertTrue(all(button.accessibleName() == button.property('full_text') for button in w.nav_buttons))
+        w.toggle_sidebar()
+        self.assertTrue(all(group.isVisible() for group in w.nav_groups))
+        self.assertEqual(w.sidebar.width(), 246)
 
     def test_empty_values_unknown_and_kpi_navigates(self):
         overview = self.window.overview_widget

@@ -1,9 +1,8 @@
 """Desktop shell and form composition, separate from analysis services."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout,
     QFormLayout, QPushButton, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
-    QProgressBar, QTabWidget, QTableWidget, QHeaderView, QTextEdit, QScrollArea,
-    QAbstractItemView)
+    QProgressBar, QTabWidget, QTextEdit, QScrollArea)
 from modules.ui.overview import Overview, label, panel
 from modules.ui.design_system import CREDIT, GlassBackdrop
 
@@ -33,19 +32,6 @@ def page(title, description):
     return widget, layout
 
 
-def table_page(title, description, columns):
-    widget, layout = page(title, description)
-    layout.addWidget(label('نمای موجود · الگوی فیلتر و جزئیات این صفحه در مرحله بعد تکمیل می‌شود.', 'muted'))
-    table = QTableWidget(0, len(columns))
-    table.setHorizontalHeaderLabels(columns)
-    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    table.horizontalHeader().setStretchLastSection(True)
-    layout.addWidget(table)
-    return widget, table
-
-
 def build_shell(w):
     central = GlassBackdrop()
     central.setObjectName('shell')
@@ -54,12 +40,12 @@ def build_shell(w):
     root = QHBoxLayout(central)
     root.setDirection(QHBoxLayout.Direction.LeftToRight)
     root.setContentsMargins(18, 18, 18, 12)
-    root.setSpacing(18)
+    root.setSpacing(16)
     content = QWidget()
     content.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     main = QVBoxLayout(content)
     main.setContentsMargins(0, 0, 0, 0)
-    main.setSpacing(20)
+    main.setSpacing(12)
     root.addWidget(content, 1)
     top = QFrame()
     top.setObjectName('topbar')
@@ -77,6 +63,7 @@ def build_shell(w):
     bar.addWidget(w.run_btn)
     main.addWidget(top)
     w.site_status_label = label('سایتی انتخاب نشده است', 'muted')
+    w.site_status_label.setProperty('role', 'eyebrow')
     main.addWidget(w.site_status_label)
     w.stage_banner = label('', 'muted')
     w.stage_banner.hide()
@@ -88,16 +75,12 @@ def build_shell(w):
     w.overview_widget.navigate.connect(w.navigate)
     w.kpi_label = w.overview_widget.state_badge
     w.tabs.addTab(scroll(w.overview_widget), 'نمای کلی')
-    widget, w.technical_table = table_page('ممیزی فنی', 'یافته‌های ثبت‌شده برای صفحات همین اجرا.',
-        ['قاعده', 'شدت', 'دسته', 'مشکل', 'نشانی صفحه', 'اقدام پیشنهادی'])
-    w.tabs.addTab(widget, 'ممیزی فنی')
-    widget, w.keywords_table = table_page('کلمات کلیدی', 'عبارت‌های استخراج‌شده از محتوای سایت؛ امتیاز TF-IDF داخلی است.',
-        ['عبارت', 'فراوانی', 'TF-IDF داخلی', 'خوشه'])
-    w.tabs.addTab(widget, 'کلمات کلیدی')
-    widget, w.competitors_table = table_page('رقبا و SERP',
-        'داده از SERP ثبت‌شده؛ برای انتخاب مستقل صفر تا پنج رقیب، صفحه «انتخاب رقیب هر کلمه» را باز کنید.',
-        ['دامنه', 'شاخص داخلی حضور', 'تعداد عبارت‌ها', 'وضعیت شکاف'])
-    w.tabs.addTab(widget, 'رقبا و SERP')
+    from modules.ui.analysis_pages import make_view, SPECS
+    w.analysis_views = {key: make_view(key) for key in ('audit', 'keywords', 'competitors', 'opportunities', 'clusters', 'gap', 'cannibalization', 'roadmap')}
+    for key, attribute in [('audit', 'technical_table'), ('keywords', 'keywords_table'), ('competitors', 'competitors_table')]:
+        view = w.analysis_views[key]
+        setattr(w, attribute, view.table)
+        w.tabs.addTab(view, SPECS[key][0])
     widget, body = page('گزارش عملیات', 'پیام‌های سرویس و جزئیات خطاهای آخرین اجرای بازشده.')
     w.log_output = QTextEdit()
     w.log_output.setReadOnly(True)
@@ -163,18 +146,8 @@ def build_shell(w):
     body.addStretch()
     w.tabs.addTab(scroll(widget), 'اجرای تحلیل')  # 6
     w.page_indices = dict(overview=0, audit=1, keywords=2, competitors=3, logs=4, sites=5, run=6)
-    for key, title, description in [
-        ('opportunities', 'فرصت‌های کلمات کلیدی', 'اجزای امتیاز، منشأ و دلیل فرصت باید کنار هم قرار گیرند.'),
-        ('clusters', 'خوشه‌های موضوعی', 'ارتباط عبارت‌ها و صفحات باید با شواهد قابل مرور باشد.'),
-        ('gap', 'شکاف محتوایی', 'مقایسه مستند پوشش سایت و صفحات رقبا.'),
-        ('cannibalization', 'هم‌نوع‌خواری', 'بررسی هم‌پوشانی عبارت‌ها در چند صفحه.'),
-        ('roadmap', 'نقشه راه', 'اقدام‌های کلی در گزارش و استراتژی اختصاصی در صفحه «استراتژی و مایندمپ» قرار دارد.')]:
-        widget, body = page(title, description)
-        frame, detail = panel('بازطراحی این صفحه در مرحله بعد', 'این صفحه هنوز الگوی کامل فیلتر و جزئیات را ندارد. داده‌های موجود را در گزارش همان اجرا بررسی کنید؛ ثبت وضعیت اقدام هنوز پشتیبانی نمی‌شود.')
-        detail.addWidget(button('رفتن به گزارش‌ها', lambda: w.navigate('reports')))
-        body.addWidget(frame)
-        body.addStretch()
-        w.page_indices[key] = w.tabs.addTab(scroll(widget), title)
+    for key in ('opportunities', 'clusters', 'gap', 'cannibalization', 'roadmap'):
+        w.page_indices[key] = w.tabs.addTab(w.analysis_views[key], SPECS[key][0])
     widget, body = page('گزارش‌ها', 'خروجی Excel و HTML مستقل، فقط برای اجرای بارگذاری‌شده.')
     frame, controls = panel('خروجی اجرا', 'تا پیش از وجود نتیجه، خروجی غیرفعال است. وضعیت ناقص و محدودیت‌ها در گزارش حفظ می‌شوند.')
     w.export_excel_btn = button('ذخیره Excel چندشیتی', w.export_excel)
@@ -185,14 +158,21 @@ def build_shell(w):
     body.addWidget(frame)
     body.addStretch()
     w.page_indices['reports'] = w.tabs.addTab(widget, 'گزارش‌ها')
-    widget, body = page('تاریخچه اجراها', 'نسخه فعلی اجرا را با شناسه بارگذاری می‌کند؛ طراحی فهرست و مقایسه دیداری در مرحله بعد است.')
-    w.history_btn = button('باز کردن اجرا با شناسه', w.open_saved_run)
-    w.compare_btn = button('مقایسه با اجرای قبلی', w.compare_saved_run)
+    from modules.ui.intelligence import EvidenceTable
+    w.history_view = EvidenceTable('تاریخچه اجراها', 'یک اجرا را انتخاب کنید و آن را باز کنید؛ مقایسه با اجرای فعلی همین سایت انجام می‌شود.',
+        [('id', 'شناسه'), ('status', 'وضعیت خزش'), ('started_at', 'شروع'), ('finished_at', 'پایان')], 'status')
+    body = w.history_view.layout()
+    w.history_btn = button('باز کردن اجرای انتخاب‌شده', w.open_selected_run)
+    w.compare_btn = button('مقایسه اجرای انتخاب‌شده با نتیجه فعلی', w.compare_selected_run)
     body.addWidget(w.history_btn)
     body.addWidget(w.compare_btn)
+    body.addWidget(button('باز کردن اجرا با شناسه', w.open_saved_run))
     body.addWidget(button('تاریخچه بررسی‌های مستقل رقبا', w.open_competitor_history))
-    body.addStretch()
-    w.page_indices['history'] = w.tabs.addTab(widget, 'تاریخچه اجراها')
+    w.comparison_view = EvidenceTable('تغییر یافته‌ها', 'مقایسه فقط برای صفحات مشاهده‌شده معتبر است.',
+        [('change', 'تغییر'), ('rule_id', 'قاعده'), ('url', 'صفحه')], 'change')
+    body.addWidget(w.comparison_view)
+    w.comparison_view.hide()
+    w.page_indices['history'] = w.tabs.addTab(w.history_view, 'تاریخچه اجراها')
     widget, body = page('تنظیمات', 'رابط فارسی و راست‌چین؛ اتصال‌های بیرونی تنها با داده واقعی.')
     frame, controls = panel('منبع SERP', 'فایل JSON تاریخ‌دار از منبع مجاز وارد کنید؛ دامنه‌ها را در صفحه «انتخاب رقیب هر کلمه» انتخاب کنید.')
     w.serp_path_input = QLineEdit()
@@ -227,22 +207,25 @@ def build_shell(w):
         [('term', 'عبارت'), ('frequency', 'فراوانی در فیلدها'), ('children', 'فرزندان'), ('source_pages', 'صفحات منبع')])
     w.competitor_selection = CompetitorSelection(w)
     w.strategy_map = StrategyMap()
+    from modules.ui.keyword_research import KeywordResearch
+    w.keyword_research = KeywordResearch(w)
     w.page_indices['pages'] = w.tabs.addTab(w.site_evidence, 'جزئیات سئوی صفحات')
     w.page_indices['keyword_tree'] = w.tabs.addTab(w.keyword_evidence, 'کلمات و فرزندان')
     w.page_indices['selection'] = w.tabs.addTab(w.competitor_selection, 'انتخاب رقیب هر کلمه')
     w.page_indices['strategy'] = w.tabs.addTab(w.strategy_map, 'استراتژی و مایندمپ')
+    w.page_indices['research'] = w.tabs.addTab(w.keyword_research, 'تحقیق عبارات')
     # Physical right-hand sidebar remains right-aligned independently of bidi text.
     w.sidebar = QFrame()
     w.sidebar.setObjectName('sidebar')
     w.sidebar.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-    w.sidebar.setFixedWidth(224)
+    w.sidebar.setFixedWidth(246)
     side = QVBoxLayout(w.sidebar)
     side.setContentsMargins(14, 18, 14, 14)
     side.setSpacing(6)
     w.brand_label = label('SEO Intelligence', 'brand')
     w.brand_label.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
     side.addWidget(w.brand_label)
-    w.brand_subtitle = label('V2  /  فضای تحلیل سئو', 'muted')
+    w.brand_subtitle = label('فضای هوشمند تحلیل سئو  /  V2', 'muted')
     side.addWidget(w.brand_subtitle)
     w.collapse_btn = button('جمع کردن منو  ›', w.toggle_sidebar)
     w.collapse_btn.setAccessibleName('جمع یا باز کردن نوار ناوبری')
@@ -251,13 +234,22 @@ def build_shell(w):
     nav_body = QVBoxLayout(nav)
     nav_body.setContentsMargins(0, 8, 0, 8)
     nav_body.setSpacing(2)
+    from modules.ui.icons import line_icon
     w.nav_buttons = []
+    w.nav_groups = []
+    groups = {'overview': 'فضای کاری', 'audit': 'تحلیل سایت', 'competitors': 'تحلیل رقبا', 'pages': 'ابزارها', 'reports': 'مدیریت'}
     for key in ('overview', 'sites', 'run', 'audit', 'keywords', 'opportunities', 'clusters',
-                'competitors', 'gap', 'cannibalization', 'roadmap', 'pages', 'keyword_tree', 'selection', 'strategy', 'reports', 'history', 'settings', 'about'):
+                'competitors', 'gap', 'cannibalization', 'roadmap', 'pages', 'keyword_tree', 'research', 'selection', 'strategy', 'reports', 'history', 'settings', 'about'):
+        if key in groups:
+            heading = label(groups[key], 'navgroup')
+            nav_body.addWidget(heading)
+            w.nav_groups.append(heading)
         index = w.page_indices[key]
         text = w.tabs.tabText(index)
         control = button(text, lambda checked=False, idx=index: w.switch_tab(idx), 'nav')
         control.setCheckable(True)
+        control.setIcon(line_icon(key))
+        control.setIconSize(QSize(17, 17))
         control.setProperty('page_index', index)
         control.setProperty('full_text', text)
         control.setAccessibleName(text)
@@ -272,8 +264,10 @@ def build_shell(w):
     w.credit_label.setObjectName('credit')
     w.credit_label.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
     w.credit_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    w.credit_label.setWordWrap(False)
     side.addWidget(w.credit_label)
-    side.addWidget(label('نسخه ۲ · ذخیره‌سازی محلی', 'muted'))
+    w.sidebar_version = label('نسخه ۲ · ذخیره‌سازی محلی', 'muted')
+    side.addWidget(w.sidebar_version)
     root.addWidget(w.sidebar)
     w._sidebar_compact = False
     w.switch_tab(0)
