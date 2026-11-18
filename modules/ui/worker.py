@@ -43,3 +43,29 @@ class SEOAnalysisWorker(QThread):
 
         except Exception as e:
             self.error_occurred.emit(str(e))
+
+
+class ReportExportWorker(QThread):
+    """Export an immutable-by-convention result snapshot off the GUI thread."""
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, path, result, kind, parent=None):
+        super().__init__(parent)
+        self.path, self.result, self.kind = path, result, kind
+
+    def run(self):
+        try:
+            if self.kind == 'excel':
+                from modules.reporting.excel_reporter import ExcelReportGenerator
+                saved = ExcelReportGenerator().generate_report(self.path, self.result)
+            else:
+                from modules.reporting.html_reporter import HTMLReportGenerator
+                saved = HTMLReportGenerator.generate_report(self.path, self.result)
+            self.succeeded.emit(str(saved))
+        except Exception as error:
+            self.failed.emit(str(error))
+        finally:
+            # Finished workers are Qt children until window close; release the
+            # potentially large snapshot as soon as the export no longer needs it.
+            self.result = None

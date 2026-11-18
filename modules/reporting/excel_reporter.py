@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 import pandas as pd
 from openpyxl.styles import Font, PatternFill, Alignment
+from modules.reporting.excel_text import ExcelText
 
 
 class ExcelReportGenerator:
@@ -225,16 +226,20 @@ class ExcelReportGenerator:
 
         sheets_map['Run Metadata'] = rows_frame([meta])
 
-        # Force cells to text when external strings resemble spreadsheet formulas.
-        for frame in sheets_map.values():
-            for column in frame.columns:
-                frame[column] = frame[column].map(lambda value: "'" + value
-                    if isinstance(value, str) and value.startswith(('=', '+', '-', '@')) else value)
+        text = ExcelText()
+        for sheet_name, frame in sheets_map.items():
+            # Serialize before pandas/openpyxl can truncate or reject a cell.
+            for col_index in range(len(frame.columns)):
+                frame.isetitem(col_index, [text.prepare(value, sheet_name, row_index, col_index + 1)
+                                          for row_index, value in enumerate(frame.iloc[:, col_index], 2)])
+            frame.columns = [text.prepare(value, sheet_name, 1, index)
+                             for index, value in enumerate(frame.columns, 1)]
 
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             for sheet_name, df in sheets_map.items():
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
                 worksheet = writer.sheets[sheet_name]
                 self._style_worksheet(worksheet, df)
+            text.write(writer.book)
 
         return os.path.abspath(output_path)

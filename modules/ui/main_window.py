@@ -1,11 +1,9 @@
 from typing import Dict, Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QMainWindow, QFileDialog, QMessageBox, QInputDialog, QTableWidgetItem,
+    QMainWindow, QFileDialog, QMessageBox, QInputDialog,
 )
 from modules.ui.worker import SEOAnalysisWorker
-from modules.reporting.excel_reporter import ExcelReportGenerator
-from modules.reporting.html_reporter import HTMLReportGenerator
 
 
 class MainWindow(QMainWindow):
@@ -15,6 +13,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.orchestrator = orchestrator_engine
         self.worker = None
+        self.export_worker = None
         self.last_result_data = {}
 
         from modules.ui.design_system import STYLES, ui_font
@@ -26,12 +25,15 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(980, 700)
         self.setStyleSheet(STYLES)
         build_shell(self)
+        self.log_output.document().setMaximumBlockCount(1500)
         self.refresh_sites()
 
     def navigate(self, destination):
         self.switch_tab(self.page_indices[destination])
 
     def switch_tab(self, index: int):
+        if index == self.page_indices.get('history'):
+            self.refresh_history()
         self.tabs.setCurrentIndex(index)
         self.breadcrumb.setText('فضای کاری  /  ' + self.tabs.tabText(index))
         for btn in self.nav_buttons:
@@ -39,14 +41,19 @@ class MainWindow(QMainWindow):
 
     def toggle_sidebar(self):
         self._sidebar_compact = not self._sidebar_compact
-        self.sidebar.setFixedWidth(112 if self._sidebar_compact else 224)
+        self.sidebar.setFixedWidth(112 if self._sidebar_compact else 246)
         self.brand_label.setText('SEO V2' if self._sidebar_compact else 'SEO Intelligence')
         self.brand_subtitle.setVisible(not self._sidebar_compact)
         self.collapse_btn.setText('‹' if self._sidebar_compact else 'جمع کردن منو  ›')
+        for heading in self.nav_groups:
+            heading.setVisible(not self._sidebar_compact)
+        self.sidebar_version.setVisible(not self._sidebar_compact)
+        self.credit_label.setStyleSheet('font-size: 9px;' if self._sidebar_compact else '')
         for btn in self.nav_buttons:
-            full = btn.property('full_text')
-            btn.setText(btn.fontMetrics().elidedText(full, Qt.TextElideMode.ElideRight, 55)
-                        if self._sidebar_compact else full)
+            btn.setText('' if self._sidebar_compact else btn.property('full_text'))
+            btn.setProperty('compact', self._sidebar_compact)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def log_message(self, message: str):
         from html import escape
@@ -76,6 +83,7 @@ class MainWindow(QMainWindow):
             return
         if self.last_result_data.get('meta', {}).get('project_id') != site['id']:
             self.clear_result_view()
+        self.refresh_history()
         self.url_input.setText(site['website_url'])
         from database.sites import SiteRepository
         status = SiteRepository.status(site['id'])
@@ -89,7 +97,14 @@ class MainWindow(QMainWindow):
 
     def clear_result_view(self):
         self.last_result_data = {}
+        from modules.ui.analysis_pages import present_views
+        present_views(self, {})
+        self.history_view.present([])
+        self.comparison_view.present([])
+        self.comparison_view.chart.present([])
+        self.comparison_view.hide()
         self.stage_banner.hide()
+        self.keyword_research.invalidate()
         self.site_evidence.present([])
         self.keyword_evidence.present([])
         self.competitor_selection.present({})
@@ -101,8 +116,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.log_output.clear()
-        for table in (self.technical_table, self.keywords_table, self.competitors_table):
-            table.setRowCount(0)
 
     def crawl_settings(self):
         return dict(max_pages=self.max_pages_input.value(), max_depth=self.max_depth_input.value(),
@@ -196,6 +209,10 @@ class MainWindow(QMainWindow):
             self.site_status_label.setText(self.site_selector.currentText() + '  ·  ' + self.status_text(SiteRepository.status(self.site_selector.currentData())))
 
     def closeEvent(self, event):
+        if self.export_worker and self.export_worker.isRunning():
+            self.statusBar().showMessage('در حال ذخیره گزارش؛ پس از پایان می‌توانید برنامه را ببندید.', 5000)
+            event.ignore()
+            return
         if self.worker and self.worker.isRunning():
             QMessageBox.information(self, "تحلیل در حال اجراست", "برای بستن برنامه، ابتدا تحلیل را متوقف کنید و منتظر پایان عملیات جاری بمانید.")
             event.ignore()
@@ -229,15 +246,64 @@ class MainWindow(QMainWindow):
         if not accepted:
             return
         try:
-            import json
-            from database.results import AnalysisResultRepository
-            comparison = AnalysisResultRepository.compare(run_id, current)
-            previous = AnalysisResultRepository.load(run_id)
-            self.overview_widget.present(self.last_result_data, previous)
-            self.log_message(json.dumps(comparison, ensure_ascii=False, indent=2))
-            self.switch_tab(4)
+            self.compare_run(run_id)
         except Exception as error:
             QMessageBox.warning(self, "مقایسه", str(error))
+
+    def refresh_history(self):
+        from database.repository import AnalysisRepository
+        project_id = self.site_selector.currentData()
+        self.history_view.present(AnalysisRepository.get_project_analysis_runs(project_id) if project_id else [])
+
+    def selected_history_id(self):
+        items = self.history_view.table.selectedItems()
+        return self.history_view.rows[items[0].data(Qt.ItemDataRole.UserRole)]['id'] if items else None
+
+    def open_selected_run(self):
+        if self.worker and self.worker.isRunning():
+            return
+        run_id = self.selected_history_id()
+        if run_id is None:
+            self.statusBar().showMessage('یک اجرا را از جدول تاریخچه انتخاب کنید.', 5000)
+            return
+        try:
+            result = self.orchestrator.load_result(run_id)
+            if result is None:
+                raise ValueError('این اجرا نتیجه ذخیره‌شده ندارد؛ وضعیت خزش و خطا را بررسی کنید.')
+            self.on_analysis_finished(result)
+        except Exception as error:
+            QMessageBox.warning(self, 'تاریخچه', str(error))
+
+    def compare_selected_run(self):
+        if self.worker and self.worker.isRunning():
+            return
+        run_id = self.selected_history_id()
+        if run_id is None or not self.last_result_data:
+            self.statusBar().showMessage('ابتدا نتیجه فعلی را باز و اجرای قبلی را انتخاب کنید.', 5000)
+            return
+        try:
+            self.compare_run(run_id)
+        except Exception as error:
+            QMessageBox.warning(self, 'مقایسه', str(error))
+
+    def compare_run(self, run_id):
+        import json
+        from database.results import AnalysisResultRepository
+        if self.last_result_data.get('meta', {}).get('stage_result_id'):
+            raise ValueError('برای مقایسه سایت دو نتیجه خزش را انتخاب کنید؛ نتیجه فعلی مرحله رقباست.')
+        current = self.last_result_data.get('meta', {}).get('analysis_run_id')
+        comparison = AnalysisResultRepository.compare(run_id, current)
+        previous = AnalysisResultRepository.load(run_id)
+        self.overview_widget.present(self.last_result_data, previous)
+        self.log_message(json.dumps(comparison, ensure_ascii=False, indent=2))
+        self.show_comparison(comparison)
+
+    def show_comparison(self, comparison):
+        names = {'added': 'جدید', 'resolved': 'رفع‌شده در صفحات مشاهده‌شده', 'unobserved': 'صفحه دوباره مشاهده نشده'}
+        self.comparison_view.present([dict(row, change=names[k]) for k in names for row in comparison[k]])
+        self.comparison_view.show_chart('تغییر یافته‌ها', [(names[k], len(comparison[k])) for k in names], 'تعداد یافته')
+        self.comparison_view.show()
+        self.navigate('history')
 
     def open_competitor_history(self):
         if self.worker and self.worker.isRunning():
@@ -335,11 +401,15 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def on_progress_update(self, message: str, progress: int):
-        self.run_message.setText("در حال پردازش؛ جزئیات مرحله در گزارش عملیات ثبت می‌شود.")
+        self.run_message.setText(message)
         self.log_message(message)
 
     def on_analysis_finished(self, result_data: Dict[str, Any]):
         self.last_result_data = result_data
+        self.comparison_view.present([])
+        self.comparison_view.chart.present([])
+        self.comparison_view.hide()
+        self.keyword_research.invalidate()
         self.refresh_sites()
         project_index = self.site_selector.findData(result_data.get('meta', {}).get('project_id'))
         if project_index >= 0:
@@ -347,8 +417,8 @@ class MainWindow(QMainWindow):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
         self.run_btn.setEnabled(not (self.worker and self.worker.isRunning()))
-        self.export_excel_btn.setEnabled(True)
-        self.export_html_btn.setEnabled(True)
+        self.export_excel_btn.setEnabled(not (self.export_worker and self.export_worker.isRunning()))
+        self.export_html_btn.setEnabled(not (self.export_worker and self.export_worker.isRunning()))
 
         for warning in result_data.get("meta", {}).get("warnings", []):
             self.log_message(warning)
@@ -365,36 +435,9 @@ class MainWindow(QMainWindow):
         self.run_message.setText('نتیجه ذخیره شد · ' + status + '؛ میزان پوشش را در نمای کلی بررسی کنید.')
         self.site_status_label.setText(self.site_selector.currentText() + '  ·  ' + status)
 
-        # به‌روزرسانی جدول ممیزی فنی
-        audit = result_data.get("audit_summary", {})
-        issues = audit.get("issues", [])
-        self.technical_table.setRowCount(len(issues))
-        for row, iss in enumerate(issues):
-            self.technical_table.setItem(row, 0, QTableWidgetItem(str(iss.get("rule_id", ""))))
-            self.technical_table.setItem(row, 1, QTableWidgetItem(str(iss.get("severity", ""))))
-            self.technical_table.setItem(row, 2, QTableWidgetItem(str(iss.get("category", ""))))
-            self.technical_table.setItem(row, 3, QTableWidgetItem(str(iss.get("title", ""))))
-            self.technical_table.setItem(row, 4, QTableWidgetItem(str(iss.get("url", ""))))
-            self.technical_table.setItem(row, 5, QTableWidgetItem(str(iss.get("recommendation", ""))))
-
-        # به‌روزرسانی جدول کلمات کلیدی
-        kw_data = result_data.get("keyword_analysis", {}).get("keywords", [])
-        self.keywords_table.setRowCount(len(kw_data))
-        for row, kw in enumerate(kw_data):
-            self.keywords_table.setItem(row, 0, QTableWidgetItem(str(kw.get("term", ""))))
-            self.keywords_table.setItem(row, 1, QTableWidgetItem(str(kw.get("frequency", ""))))
-            self.keywords_table.setItem(row, 2, QTableWidgetItem(str(kw.get("tfidf", ""))))
-            self.keywords_table.setItem(row, 3, QTableWidgetItem(str(kw.get("cluster", ""))))
-
-        # به‌روزرسانی جدول رقبا
-        comps = result_data.get("project_competitors", [])
-        self.competitors_table.setRowCount(len(comps))
-        for row, comp in enumerate(comps):
-            self.competitors_table.setItem(row, 0, QTableWidgetItem(str(comp.get("domain", ""))))
-            self.competitors_table.setItem(row, 1, QTableWidgetItem(str(comp.get("competitiveness_score", ""))))
-            self.competitors_table.setItem(row, 2, QTableWidgetItem(str(comp.get("keywords_count", ""))))
-            self.competitors_table.setItem(row, 3, QTableWidgetItem(result_data.get("content_gap_analysis", {}).get("status", "unavailable")))
-
+        from modules.ui.analysis_pages import present_views
+        present_views(self, result_data)
+        self.refresh_history()
         self.statusBar().showMessage('نتیجه ذخیره شد · ' + status, 8000)
         self.navigate('overview')
 
@@ -414,25 +457,41 @@ class MainWindow(QMainWindow):
         self.run_btn.setEnabled(not (self.worker and self.worker.isRunning()))
         QMessageBox.critical(self, "خطای اجرا", f"تحلیل انجام نشد. جزئیات خطا:\n{error_msg}")
 
-    def export_excel(self):
-        if not self.last_result_data:
+    def start_export(self, path, kind):
+        if self.export_worker and self.export_worker.isRunning():
             return
-        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره گزارش Excel", "seo_audit_report.xlsx", "Excel Files (*.xlsx)")
+        from modules.ui.worker import ReportExportWorker
+        self.export_worker = ReportExportWorker(path, self.last_result_data, kind, self)
+        self.export_excel_btn.setEnabled(False)
+        self.export_html_btn.setEnabled(False)
+        self.statusBar().showMessage('در حال ساخت گزارش… می‌توانید نتایج را مرور کنید.')
+        self.export_worker.succeeded.connect(self.export_succeeded)
+        self.export_worker.failed.connect(self.export_failed)
+        self.export_worker.finished.connect(self.export_finished)
+        self.export_worker.start()
+
+    def export_succeeded(self, path):
+        self.statusBar().showMessage('گزارش ذخیره شد: ' + path, 10000)
+
+    def export_failed(self, message):
+        self.statusBar().showMessage('ساخت گزارش ناموفق بود: ' + message)
+        QMessageBox.critical(self, 'خطای ساخت گزارش', message)
+
+    def export_finished(self):
+        enabled = bool(self.last_result_data) and not (self.worker and self.worker.isRunning())
+        self.export_excel_btn.setEnabled(enabled)
+        self.export_html_btn.setEnabled(enabled)
+
+    def export_excel(self):
+        if not self.last_result_data or (self.export_worker and self.export_worker.isRunning()):
+            return
+        file_path, _ = QFileDialog.getSaveFileName(self, 'ذخیره گزارش Excel', 'seo_audit_report.xlsx', 'Excel Files (*.xlsx)')
         if file_path:
-            try:
-                reporter = ExcelReportGenerator()
-                saved_path = reporter.generate_report(file_path, self.last_result_data)
-                QMessageBox.information(self, "گزارش ذخیره شد", f"مسیر گزارش Excel:\n{saved_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "خطای ساخت گزارش", str(e))
+            self.start_export(file_path, 'excel')
 
     def export_html(self):
-        if not self.last_result_data:
+        if not self.last_result_data or (self.export_worker and self.export_worker.isRunning()):
             return
-        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره گزارش HTML", "seo_dashboard.html", "HTML Files (*.html)")
+        file_path, _ = QFileDialog.getSaveFileName(self, 'ذخیره گزارش HTML', 'seo_dashboard.html', 'HTML Files (*.html)')
         if file_path:
-            try:
-                saved_path = HTMLReportGenerator.generate_report(file_path, self.last_result_data)
-                QMessageBox.information(self, "گزارش ذخیره شد", f"مسیر گزارش HTML:\n{saved_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "خطای ساخت گزارش", str(e))
+            self.start_export(file_path, 'html')

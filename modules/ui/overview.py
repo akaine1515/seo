@@ -1,7 +1,7 @@
 """Native dashboard presentation. Values are read from snapshots, never fabricated."""
 import json
 from datetime import datetime, timezone
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
                                QHBoxLayout, QDialog, QPlainTextEdit)
 from modules.ui.design_system import STATUS_TEXT
@@ -30,18 +30,32 @@ def panel(title, description=''):
 
 
 class MetricButton(QPushButton):
-    def __init__(self, title):
+    def __init__(self, title, icon, accent, soft):
         super().__init__()
         self.setProperty('role', 'metric')
         self.title = title
         body = QVBoxLayout(self)
-        body.setContentsMargins(18, 14, 18, 14)
-        body.setSpacing(4)
+        body.setContentsMargins(16, 13, 16, 13)
+        body.setSpacing(5)
+        header = QHBoxLayout()
+        self.title_label = label(title, 'muted')
+        self.title_label.setWordWrap(False)
+        header.addWidget(self.title_label, 1)
+        from modules.ui.icons import line_icon
+        glyph = QLabel()
+        glyph.setFixedSize(34, 34)
+        glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        glyph.setStyleSheet(f'background: {soft}; border-radius: 11px;')
+        glyph.setPixmap(line_icon(icon, accent).pixmap(QSize(18, 18)))
+        header.addWidget(glyph)
+        body.addLayout(header)
         self.value_label = label('—')
-        self.value_label.setStyleSheet('font-size: 28px; font-weight: 600;')
+        self.value_label.setStyleSheet(f'color: {accent}; font-size: 28px; font-weight: 700;')
         body.addWidget(self.value_label)
-        body.addWidget(label(title, 'muted'))
-        for item in (body.itemAt(i).widget() for i in range(body.count())):
+        hint = label('مشاهده جزئیات  ←', 'muted')
+        hint.setStyleSheet('font-size: 11px; color: #60788A;')
+        body.addWidget(hint)
+        for item in (self.title_label, glyph, self.value_label, hint):
             item.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     def set_value(self, value):
@@ -80,6 +94,7 @@ class Overview(QWidget):
         layout.setSpacing(14)
         title_row = QHBoxLayout()
         heading = QVBoxLayout()
+        heading.addWidget(label('داشبورد  /  فضای تحلیل', 'eyebrow'))
         heading.addWidget(label('نمای کلی', 'title'))
         self.subtitle = label('از شناخت سایت تا یک برنامه اقدام روشن و قابل پیگیری', 'muted')
         heading.addWidget(self.subtitle)
@@ -95,23 +110,33 @@ class Overview(QWidget):
         layout.addWidget(self.demo)
         metrics = QHBoxLayout()
         self.metrics = {}
-        for key, title, destination in [('pages', 'صفحات بررسی‌شده', 'audit'),
-            ('critical', 'خطاهای بحرانی', 'audit'), ('opportunities', 'فرصت‌های شناسایی‌شده', 'opportunities'),
-            ('actions', 'اقدام‌های پیشنهادی', 'roadmap')]:
-            button = MetricButton(title)
+        for key, title, destination, icon, accent, soft in [
+            ('pages', 'صفحات بررسی‌شده', 'audit', 'pages', '#3268BD', '#E9F1FE'),
+            ('critical', 'خطاهای بحرانی', 'audit', 'audit', '#B94C55', '#FCECEF'),
+            ('opportunities', 'فرصت‌های شناسایی‌شده', 'opportunities', 'opportunities', '#7253BD', '#F1ECFC'),
+            ('actions', 'اقدام‌های پیشنهادی', 'roadmap', 'roadmap', '#087C80', '#E2F7F3')]:
+            button = MetricButton(title, icon, accent, soft)
             button.setToolTip('مشاهده جزئیات · ' + title)
             button.clicked.connect(lambda checked=False, dest=destination: self.navigate.emit(dest))
             self.metrics[key] = (button, title)
             metrics.addWidget(button, 1)
         layout.addLayout(metrics)
+        from modules.ui.charts import BarChart
+        self.coverage_chart = BarChart('پوشش خزش اجرای بازشده', 'تعداد URL')
+        self.trend_chart = BarChart('یافته‌های دو اجرا', 'تعداد یافته')
         frame, body = panel('وضعیت تحلیل و میزان پوشش')
+        overview_row = QHBoxLayout()
+        summary_body = QVBoxLayout()
         self.summary = label('')
         self.notice = label('', 'muted')
-        body.addWidget(self.summary)
-        body.addWidget(self.notice)
+        summary_body.addWidget(self.summary)
+        summary_body.addWidget(self.notice)
         self.next_button = QPushButton('افزودن اولین سایت')
         self.next_button.clicked.connect(lambda: self.navigate.emit('sites'))
-        body.addWidget(self.next_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignAbsolute)
+        summary_body.addWidget(self.next_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignAbsolute)
+        overview_row.addLayout(summary_body, 1)
+        overview_row.addWidget(self.coverage_chart, 1)
+        body.addLayout(overview_row)
         layout.addWidget(frame)
         frame, self.actions_layout = panel('اقدام‌های پیشنهادی بعدی', 'برای هر پیشنهاد، دلیل و شواهد آن را بررسی کنید.')
         self.actions_frame = frame
@@ -120,6 +145,7 @@ class Overview(QWidget):
         trend, body = panel('روند اجراها', 'مقایسه فقط برای اجراهای ذخیره‌شده همان سایت معتبر است.')
         self.trend = label('هنوز دو اجرای قابل مقایسه در این نما بارگذاری نشده است.', 'muted')
         body.addWidget(self.trend)
+        body.addWidget(self.trend_chart)
         button = QPushButton('تاریخچه و مقایسه اجراها')
         button.clicked.connect(lambda: self.navigate.emit('history'))
         body.addWidget(button)
@@ -151,6 +177,7 @@ class Overview(QWidget):
         self.subtitle.setText(('\u2066' + str(meta.get('target_domain', '')) + '  |  ' + data_time(meta.get('generated_at')) + '\u2069') if available else 'برای شروع، سایت خود را ثبت و تنظیمات تحلیل را انتخاب کنید.')
         coverage = meta.get('coverage', {})
         actions = result.get('seo_roadmap', [])
+        self.coverage_chart.present([(title, coverage[key]) for key, title in [('saved', 'موفق'), ('failed', 'ناموفق'), ('scope_excluded', 'مستثنا'), ('queued_remaining', 'در انتظار')] if key in coverage])
         values = dict(pages=coverage.get('attempted'), critical=result.get('audit_summary', {}).get('severity_distribution', {}).get('Critical'),
                       opportunities=len(result['keyword_analysis']['opportunities']) if 'opportunities' in result.get('keyword_analysis', {}) else None,
                       actions=len(actions) if 'seo_roadmap' in result else None)
@@ -176,9 +203,10 @@ class Overview(QWidget):
         if not actions:
             self.actions_layout.addWidget(label('اقدامی برای نمایش موجود نیست؛ ابتدا تحلیل را اجرا کنید یا محدودیت داده‌ها را بررسی کنید.', 'muted'))
         for index, action in enumerate(actions[:3]):
-            row = QWidget()
+            row = QFrame()
+            row.setObjectName('actionRow')
             line = QHBoxLayout(row)
-            line.setContentsMargins(0, 4, 0, 4)
+            line.setContentsMargins(12, 8, 12, 8)
             kind = {'technical_review': 'بررسی و اصلاح فنی', 'content_review': 'بازبینی پوشش محتوا'}.get(action.get('action_type'), 'بررسی پیشنهاد')
             text = QVBoxLayout()
             text.addWidget(label(f"{index+1:02d}   {kind}"))
@@ -192,8 +220,10 @@ class Overview(QWidget):
             line.addWidget(button)
             self.actions_layout.addWidget(row)
         if previous and meta.get('project_id') is not None and previous.get('meta', {}).get('project_id') == meta.get('project_id'):
+            self.trend_chart.present([(title, item['audit_summary']['total_issues_found']) for title, item in [('قبلی', previous), ('فعلی', result)] if 'total_issues_found' in item.get('audit_summary', {})])
             self.trend.setText(f"مشکلات مشاهده‌شده: {previous.get('audit_summary', {}).get('total_issues_found', '—')} ← {result.get('audit_summary', {}).get('total_issues_found', '—')}\nتفاوت پوشش دو اجرا می‌تواند روی این تغییر اثر بگذارد.")
         else:
+            self.trend_chart.present([])
             self.trend.setText('برای مقایسه، اجرای قبلی همین سایت را در تاریخچه انتخاب کنید؛ روند بدون داده ساخته نمی‌شود.')
 
     def show_evidence(self, record):
